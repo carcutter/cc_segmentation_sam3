@@ -1,0 +1,24 @@
+run_inference:
+    python inference_torch.py --image assets/images/car.jpeg --text car
+
+export_to_onnx:
+    python export_to_onnx.py
+
+run_inference_onnx:
+    python inference_onnx.py --image assets/images/car.jpeg --text car
+
+make_model_repository:
+    python scripts/pbtxt_from_onnx.py
+    mkdir -p model_repository
+    for model_name in `ls onnx-models/*.onnx`; do \
+        mkdir -p model_repository/$(basename $model_name .onnx)/1; \
+        cp $model_name model_repository/$(basename $model_name .onnx)/1/model.onnx; \
+        cp $(basename $model_name .onnx).pbtxt model_repository/$(basename $model_name .onnx)/config.pbtxt; \
+    done
+    bash scripts/pack_conda_env.sh
+
+convert_models_to_tensorrt:
+    docker run -it --rm --gpus=all -v ${PWD}:/workspace nvcr.io/nvidia/tensorrt:25.11-py3 bash scripts/convert_to_tensorrt.sh model_repository
+
+start_triton_server:
+    docker run -it --rm --gpus=all -v ${PWD}/model_repository:/models -p 8000:8000 nvcr.io/nvidia/tritonserver:25.11-py3 tritonserver --model-repository=/models
