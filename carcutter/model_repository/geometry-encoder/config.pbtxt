@@ -1,0 +1,39 @@
+name: "geometry-encoder"
+platform: "tensorrt_plan"
+max_batch_size: 0
+
+input [
+  {
+    name: "input_boxes"
+    data_type: TYPE_FP32
+    dims: [ -1, -1, 4 ]
+  },
+  {
+    name: "input_boxes_labels"
+    data_type: TYPE_INT64
+    dims: [ -1, -1 ]
+  },
+  {
+    name: "fpn_feat_2"
+    data_type: TYPE_FP32
+    dims: [ -1, 256, 72, 72 ]
+  },
+  {
+    name: "fpn_pos_2"
+    data_type: TYPE_FP32
+    dims: [ -1, 256, 72, 72 ]
+  }
+]
+
+output [
+  {
+    name: "geometry_features"
+    data_type: TYPE_FP32
+    dims: [ -1, -1, 256 ]
+  },
+  {
+    name: "geometry_mask"
+    data_type: TYPE_BOOL
+    dims: [ -1, -1 ]
+  }
+]

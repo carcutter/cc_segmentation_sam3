@@ -1,0 +1,70 @@
+name: "pipeline"
+backend: "python"
+max_batch_size: 8
+
+input [
+  {
+    name: "image"
+    data_type: TYPE_UINT8
+    dims: [ -1 ]  # Variable length: raw image bytes
+  },
+  {
+    name: "text"
+    data_type: TYPE_UINT8
+    dims: [ -1 ]  # Variable length: UTF-8 encoded text string bytes
+    optional: true
+  },
+  {
+    name: "boxes"
+    data_type: TYPE_FP32
+    dims: [ -1, 4 ]  # Variable length: [num_boxes, 4] in xywh pixel format
+    optional: true
+  },
+  {
+    name: "box_labels"
+    data_type: TYPE_INT64
+    dims: [ -1 ]  # Variable length: [num_boxes] labels (1=positive, 0=negative)
+    optional: true
+  },
+  {
+    name: "conf_threshold"
+    data_type: TYPE_FP32
+    dims: [ 1 ]
+    optional: true
+  }
+]
+
+output [
+  {
+    name: "masks"
+    data_type: TYPE_BOOL
+    dims: [ -1, -1, -1 ]  # Variable: [batch, num_detections, H, W]
+  },
+  {
+    name: "boxes"
+    data_type: TYPE_FP32
+    dims: [ -1, -1, 4 ]  # Variable: [batch, num_detections, 4] in xyxy pixel format
+  },
+  {
+    name: "scores"
+    data_type: TYPE_FP32
+    dims: [ -1, -1 ]  # Variable: [batch, num_detections]
+  },
+  {
+    name: "num_detections"
+    data_type: TYPE_INT32
+    dims: [ -1 ]  # [batch] - number of detections per batch item
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]
+
+parameters {
+  key: "EXECUTION_ENV_PATH"
+  value: { string_value: "$$TRITON_MODEL_DIRECTORY/env.tar.gz" }
+}
