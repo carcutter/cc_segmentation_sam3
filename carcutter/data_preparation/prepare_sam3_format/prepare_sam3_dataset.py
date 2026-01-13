@@ -115,7 +115,7 @@ def process_dataset(
     val_images_dir: Path,
     val_labels_dir: Path,
     output_dir: Path,
-    category_name: str = "mirror",
+    category_names: List[str] = None,
     min_area: int = 100,
     copy_images: bool = False
 ) -> Dict:
@@ -128,13 +128,17 @@ def process_dataset(
         val_images_dir: Directory containing validation images
         val_labels_dir: Directory containing validation masks
         output_dir: Directory to save processed dataset
-        category_name: Name of the object category
+        category_names: List of category names (different text prompts for the same object)
         min_area: Minimum area threshold for filtering noise
         copy_images: Whether to copy images to output directory (default: False, uses symlinks or relative paths)
         
     Returns:
         Dictionary with statistics about the processing
     """
+    # Default to single 'mirror' category if none specified
+    if category_names is None:
+        category_names = ["mirror"]
+    
     # Create output structure
     output_dir = Path(output_dir)
     annotations_dir = output_dir / "annotations"
@@ -153,9 +157,20 @@ def process_dataset(
     
     # Initialize COCO structure for train and val
     current_date = datetime.now()
+    
+    # Create multiple categories with different prompts (all refer to same objects)
+    categories = [
+        {
+            "id": idx + 1,
+            "name": cat_name,
+            "supercategory": "object"
+        }
+        for idx, cat_name in enumerate(category_names)
+    ]
+    
     coco_train = {
         "info": {
-            "description": f"{category_name} Detection Dataset",
+            "description": f"{category_names[0]} Detection Dataset",
             "version": "1.0",
             "year": current_date.year,
             "contributor": "",
@@ -163,18 +178,12 @@ def process_dataset(
         },
         "images": [],
         "annotations": [],
-        "categories": [
-            {
-                "id": 1,
-                "name": category_name,
-                "supercategory": "object"
-            }
-        ]
+        "categories": categories
     }
     
     coco_val = {
         "info": {
-            "description": f"{category_name} Detection Dataset",
+            "description": f"{category_names[0]} Detection Dataset",
             "version": "1.0",
             "year": current_date.year,
             "contributor": "",
@@ -182,13 +191,7 @@ def process_dataset(
         },
         "images": [],
         "annotations": [],
-        "categories": [
-            {
-                "id": 1,
-                "name": category_name,
-                "supercategory": "object"
-            }
-        ]
+        "categories": categories
     }
     
     # Get all image files
@@ -219,7 +222,7 @@ def process_dataset(
             mask_path = find_matching_mask(image_path, train_labels_dir)
             result = process_single_image(
                 image_path, mask_path, img_id, annotation_id,
-                output_train_dir, min_area, category_id=1,
+                output_train_dir, min_area, category_ids=list(range(1, len(category_names) + 1)),
                 copy_image=copy_images
             )
             
@@ -243,7 +246,7 @@ def process_dataset(
             mask_path = find_matching_mask(image_path, val_labels_dir)
             result = process_single_image(
                 image_path, mask_path, img_id, annotation_id,
-                output_val_dir, min_area, category_id=1,
+                output_val_dir, min_area, category_ids=list(range(1, len(category_names) + 1)),
                 copy_image=copy_images
             )
             
@@ -284,7 +287,7 @@ def process_single_image(
     annotation_id: int,
     output_images_dir: Path,
     min_area: int,
-    category_id: int,
+    category_ids: List[int],
     copy_image: bool = False
 ) -> Optional[Dict]:
     """Process a single image-mask pair."""
@@ -319,23 +322,26 @@ def process_single_image(
     }
     
     # Create annotations for each polygon (each mirror instance)
+    # For each instance, create one annotation per category (enables multi-prompt training)
     annotations = []
     for polygon in polygons:
         bbox = calculate_bbox_from_polygon(polygon)
         area = calculate_area_from_polygon(polygon)
         
-        annotation = {
-            "id": annotation_id,
-            "image_id": image_id,
-            "category_id": category_id,
-            "segmentation": [polygon],  # COCO format expects list of polygons
-            "area": area,
-            "bbox": bbox,  # [x, y, width, height]
-            "iscrowd": 0
-        }
-        
-        annotations.append(annotation)
-        annotation_id += 1
+        # Create one annotation for each category ID (all refer to same object)
+        for category_id in category_ids:
+            annotation = {
+                "id": annotation_id,
+                "image_id": image_id,
+                "category_id": category_id,
+                "segmentation": [polygon],  # COCO format expects list of polygons
+                "area": area,
+                "bbox": bbox,  # [x, y, width, height]
+                "iscrowd": 0
+            }
+            
+            annotations.append(annotation)
+            annotation_id += 1
     
     return {
         "image_info": image_info,
@@ -391,10 +397,11 @@ def main():
         help="Output directory for COCO-formatted dataset (default: {data-root}/sam3_format)"
     )
     parser.add_argument(
-        "--category-name",
+        "--category-names",
         type=str,
+        nargs="+",
         default=None,
-        help="Name of the object category (default: same as task-name)"
+        help="List of category names (text prompts) for the object, e.g., 'mirror' 'reflective surface' 'glass mirror' (default: task-name only)"
     )
     parser.add_argument(
         "--min-area",
@@ -413,8 +420,12 @@ def main():
     # Setup paths with defaults
     data_root = Path(args.data_root)
     
-    # Set category name (use task-name if not specified)
-    category_name = args.category_name if args.category_name else args.task_name
+    # Set category names (use task-name if not specified)
+    if args.category_names:
+        category_names = args.category_names
+    else:
+        # Default: use task-name as single category
+        category_names = [args.task_name]
     
     # Setup output directory
     if args.output_dir:
@@ -463,7 +474,7 @@ def main():
     print(f"Validation images: {val_images_dir}")
     print(f"Validation labels: {val_labels_dir}")
     print(f"Output directory: {output_dir}")
-    print(f"Category name: {category_name}")
+    print(f"Category names (prompts): {', '.join(category_names)}")
     print(f"Min area: {args.min_area}")
     print(f"Copy images: {args.copy_images}")
     print("=" * 60)
@@ -475,7 +486,7 @@ def main():
         val_images_dir=val_images_dir,
         val_labels_dir=val_labels_dir,
         output_dir=output_dir,
-        category_name=category_name,
+        category_names=category_names,
         min_area=args.min_area,
         copy_images=args.copy_images
     )
@@ -488,11 +499,11 @@ def main():
     print(f"Skipped images: {stats['skipped_images']}")
     print(f"\nTraining set:")
     print(f"  Images: {stats['train_images']}")
-    print(f"  {category_name.capitalize()} instances: {stats['train_instances']}")
+    print(f"  Object instances: {stats['train_instances']}")
     print(f"  Avg instances per image: {stats['train_instances']/max(stats['train_images'], 1):.2f}")
     print(f"\nValidation set:")
     print(f"  Images: {stats['val_images']}")
-    print(f"  {category_name.capitalize()} instances: {stats['val_instances']}")
+    print(f"  Object instances: {stats['val_instances']}")
     print(f"  Avg instances per image: {stats['val_instances']/max(stats['val_images'], 1):.2f}")
     print("=" * 60)
     

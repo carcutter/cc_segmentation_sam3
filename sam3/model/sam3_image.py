@@ -490,7 +490,9 @@ class Sam3Image(torch.nn.Module):
                 hs=hs,
             )
 
-        if self.training or self.num_interactive_steps_val > 0:
+        # Always compute matching during training AND validation (needed for loss computation)
+        # Matcher is only None during pure inference
+        if self.training or self.matcher is not None:
             self._compute_matching(out, self.back_convert(find_target))
         return out
 
