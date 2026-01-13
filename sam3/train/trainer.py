@@ -22,6 +22,7 @@ import torch.nn as nn
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
 
+from sam3.eval.segmentation_metrics import SegmentationMetricsMeter
 from sam3.model.data_misc import BatchedDatapoint
 from sam3.model.model_misc import SAM3Output
 from sam3.model.utils.misc import copy_data_to_device
@@ -546,6 +547,7 @@ class Trainer:
                     model=model,
                     batch=batch,
                     key=key,
+                    phase=phase,
                 )
             # Cleanup memory
             if isinstance(find_stages, SAM3Output):
@@ -731,7 +733,7 @@ class Trainer:
                     self.logger.log(
                         os.path.join("Step_Stats", phase, progress_meter.name),
                         progress_meter.val,
-                        self.steps[Phase.VAL],
+                        self.steps[phase],
                     )
 
             if data_iter % 10 == 0:
@@ -976,11 +978,21 @@ class Trainer:
         out_dict = {}
         checkpoint_save_keys = []
         for key, meter in self._get_meters(phases).items():
-            meter_output = meter.compute_synced()
+            # Try to pass epoch parameter, fall back if not supported
+            try:
+                meter_output = meter.compute_synced(epoch=self.epoch)
+            except TypeError:
+                meter_output = meter.compute_synced()
             is_better_check = getattr(meter, "is_better", None)
 
             for meter_subkey, meter_value in meter_output.items():
-                out_dict[os.path.join("Meters_train", key, meter_subkey)] = meter_value
+                # If metric already has phase prefix followed by underscore (train_*, val_*), use it directly
+                # This avoids wrapping custom metrics like train_cc_metrics/iou in Meters_train
+                # Otherwise, wrap it in Meters_train for backward compatibility with COCO metrics
+                if '_' in meter_subkey and meter_subkey.split('_')[0] in ['train', 'val']:
+                    out_dict[meter_subkey] = meter_value
+                else:
+                    out_dict[os.path.join("Meters_train", key, meter_subkey)] = meter_value
 
                 if is_better_check is None:
                     continue
@@ -1089,6 +1101,19 @@ class Trainer:
         self.best_meter_values = {}
         if self.meters_conf:
             self.meters = instantiate(self.meters_conf, _convert_="all")
+            
+            # Inject logger into SegmentationMetricsMeter instances
+            for phase_meters in self.meters.values():
+                if isinstance(phase_meters, dict):
+                    for meter in phase_meters.values():
+                        if isinstance(meter, dict):
+                            for sub_meter in meter.values():
+                                if isinstance(sub_meter, SegmentationMetricsMeter):
+                                    sub_meter.logger = self.logger
+                        elif isinstance(meter, SegmentationMetricsMeter):
+                            meter.logger = self.logger
+                elif isinstance(phase_meters, SegmentationMetricsMeter):
+                    phase_meters.logger = self.logger
 
         self.scaler = torch.amp.GradScaler(
             self.device,
