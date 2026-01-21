@@ -1,0 +1,51 @@
+# @package _global_
+# Quick test configuration for validation on 10 images
+defaults:
+  - mirror_finetune
+  - _self_
+
+# Override paths for test experiment
+paths:
+  experiment_log_dir: /home/raul/workspace/experiments/mirror_sam3_test
+
+# Keep segmentation enabled (same as inference default)
+scratch:
+  enable_segmentation: True  # Must be True to get masks
+  
+  # Override postprocessor to match inference settings
+  original_box_postprocessor:
+    _target_: sam3.eval.postprocessors.PostProcessImage
+    max_dets_per_img: 10
+    use_original_ids: true
+    use_original_sizes_box: true
+    use_original_sizes_mask: true
+    use_presence: true
+    detection_threshold: 0.3
+    iou_type: segm  # segm to get masks
+    to_cpu: false
+
+# Override to train on 10 images then validate on 10 images
+trainer:
+  mode: train  # Train and then validate
+  max_epochs: 1  # Just 1 epoch for quick test
+  skip_first_val: False
+  
+  # Increase visualizations to see all 10 images
+  meters:
+    train:
+      mirror:
+        segmentation_metrics:
+          num_vis_samples: 2  # A few training visualizations
+    val:
+      mirror:
+        segmentation_metrics:
+          num_vis_samples: 10  # Visualize all test images
+          
+  # Limit both train and validation datasets to 10 images
+  data:
+    train:
+      dataset:
+        limit_ids: 10  # Only train on 10 images
+    val:
+      dataset:
+        limit_ids: 10  # Only validate on 10 images
