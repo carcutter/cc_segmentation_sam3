@@ -4,17 +4,25 @@ This toolkit prepares your segmentation dataset for SAM3 finetuning by convertin
 
 ## Quick Start
 
-**Minimum required:**
+**With date-stamped folders (recommended):**
+```bash
+python prepare_sam3_dataset.py \
+    --data-root /path/to/data/training/<task_name>/<date> \
+    --task-name <task_name>
+```
+
+**Auto-detect latest date folder:**
 ```bash
 python prepare_sam3_dataset.py \
     --data-root /path/to/data/training/<task_name> \
     --task-name <task_name>
+# Script will automatically use the latest date folder (e.g., 20260120)
 ```
 
 **Example for mirror detection:**
 ```bash
 python prepare_sam3_dataset.py \
-    --data-root /home/raul/workspace/data/training/mirrors \
+    --data-root /home/raul/workspace/data/training/mirrors/20260120 \
     --task-name mirror
 ```
 
@@ -24,9 +32,9 @@ This will create COCO annotations at:
 
 ## Dataset Structure
 
-**Structure:**
+**Structure with date folders (recommended):**
 ```
-/path/to/data/training/<task_name>/
+/path/to/data/training/<task_name>/<date>/
 ├── train/
 │   ├── images/              # Training images
 │   │   ├── image1.jpg
@@ -43,25 +51,29 @@ This will create COCO annotations at:
 │   └── labels/              # Validation masks
 │       ├── image5.png
 │       └── ...
-└── test/ (optional)
-    ├── images/
-    └── labels/
+├── test/ (optional)
+│   ├── images/
+│   └── labels/
+├── tmp_special_cases/       # Special cases for review
+└── train_val_split_<date>.json  # Split metadata
 ```
 
 **Example for mirror detection:**
 ```
-/home/user/workspace/data/training/mirrors/
+/home/raul/workspace/data/training/mirrors/20260120/
 ├── train/
 │   ├── images/
 │   └── labels/
-└── val/
-    ├── images/
-    └── labels/
+├── val/
+│   ├── images/
+│   └── labels/
+├── tmp_special_cases/
+└── train_val_split_20260120.json
 ```
 
 **Output:**
 ```
-/path/to/data/training/<task_name>/sam3_format/
+/path/to/data/training/<task_name>/<date>/sam3_format/
 └── annotations/
     ├── instances_train.json     # COCO format annotations for training
     └── instances_val.json       # COCO format annotations for validation
@@ -74,18 +86,26 @@ This will create COCO annotations at:
 
 ### 1. Prepare Dataset
 
-Basic usage (REQUIRED parameters):
+Basic usage with date folder (RECOMMENDED):
 ```bash
 python prepare_sam3_dataset.py \
-    --data-root /path/to/data/training/<task_name> \
+    --data-root /path/to/data/training/<task_name>/<date> \
     --task-name <task_name>
 ```
 
 **Example for mirror detection:**
 ```bash
 python prepare_sam3_dataset.py \
+    --data-root /home/raul/workspace/data/training/mirrors/20260120 \
+    --task-name mirror
+```
+
+**Auto-detect latest date:**
+```bash
+python prepare_sam3_dataset.py \
     --data-root /home/raul/workspace/data/training/mirrors \
     --task-name mirror
+# Script will automatically find and use the latest date folder
 ```
 
 This assumes your data structure is:
@@ -120,13 +140,15 @@ python prepare_sam3_dataset.py --copy-images
 ```
 
 **Parameters:**
-- `--data-root`: Root directory containing training and valid folders
+- `--data-root`: Root directory for the task (can include or exclude date folder)
+- `--date`: Specific date folder to use (e.g., 20260120). Auto-detects latest if not specified.
+- `--task-name`: Name of the task (e.g., mirror, license_plate)
 - `--train-images`: Override path to training images directory
 - `--train-labels`: Override path to training labels directory
 - `--val-images`: Override path to validation images directory
 - `--val-labels`: Override path to validation labels directory
 - `--output-dir`: Where to save the COCO annotations
-- `--category-name`: Name of the object category (default: "mirror")
+- `--category-names`: List of category names (text prompts) for multi-prompt training
 - `--min-area`: Minimum area in pixels to filter noise (default: 100)
 - `--copy-images`: Copy images to output directory instead of keeping them in place
 
@@ -311,17 +333,25 @@ annotation["segmentation"] = rle
 
 ### Your Setup
 ```
-/home/raul/workspace/data/training/mirrors/
+/home/raul/workspace/data/training/mirrors/20260120/
 ├── train/images/
 ├── train/labels/
 ├── val/images/
-└── val/labels/
+├── val/labels/
+├── tmp_special_cases/
+└── train_val_split_20260120.json
 ```
 
 ### Step 1: Prepare Dataset
 ```bash
 cd /home/raul/workspace/cc_segmentation_sam3/carcutter/data_preparation/prepare_sam3_format
 
+# Option 1: Specify full path with date
+python prepare_sam3_dataset.py \
+    --data-root /home/raul/workspace/data/training/mirrors/20260120 \
+    --task-name mirror
+
+# Option 2: Auto-detect latest date folder
 python prepare_sam3_dataset.py \
     --data-root /home/raul/workspace/data/training/mirrors \
     --task-name mirror
@@ -330,15 +360,15 @@ python prepare_sam3_dataset.py \
 ### Step 2: Verify Annotations
 ```bash
 python verify_annotations.py \
-    --dataset-dir /home/raul/workspace/data/training/mirrors/sam3_format \
+    --dataset-dir /home/raul/workspace/data/training/mirrors/20260120/sam3_format \
     --splits train val
 ```
 
 ### Step 3: Visualize Samples
 ```bash
 python visualize_coco_annotations.py \
-    --dataset-dir /home/raul/workspace/data/training/mirrors/sam3_format \
-    --images-dir /home/raul/workspace/data/training/mirrors/train/images \
+    --dataset-dir /home/raul/workspace/data/training/mirrors/20260120/sam3_format \
+    --images-dir /home/raul/workspace/data/training/mirrors/20260120/train/images \
     --split train \
     --num-samples 10
 ```
@@ -347,7 +377,7 @@ python visualize_coco_annotations.py \
 Update your SAM3 config to point to the dataset:
 ```yaml
 paths:
-  dataset_root: /home/raul/workspace/data/training/mirrors
+  dataset_root: /home/raul/workspace/data/training/mirrors/20260120
 
 dataset:
   train_ann_file: sam3_format/annotations/instances_train.json

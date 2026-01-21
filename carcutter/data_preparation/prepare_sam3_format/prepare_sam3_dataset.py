@@ -358,7 +358,13 @@ def main():
         "--data-root",
         type=str,
         required=True,
-        help="Root directory containing train/val folders (e.g., /path/to/data/training/mirrors)"
+        help="Root directory for the task (e.g., /path/to/data/training/mirrors or /path/to/data/training/mirrors/20260120)"
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Date folder to use (e.g., 20260120). If not specified, uses latest date folder or assumes data-root already includes date."
     )
     parser.add_argument(
         "--task-name",
@@ -419,6 +425,25 @@ def main():
     
     # Setup paths with defaults
     data_root = Path(args.data_root)
+    
+    # Handle date-stamped directories
+    # If date is specified, append it to data_root
+    if args.date:
+        data_root = data_root / args.date
+        print(f"Using specified date folder: {args.date}")
+    # If data_root doesn't contain train/val, try to auto-detect latest date folder
+    elif not (data_root / "train").exists():
+        # Look for date-stamped directories (YYYYMMDD format)
+        date_folders = [d for d in data_root.iterdir() 
+                       if d.is_dir() and d.name.isdigit() and len(d.name) == 8]
+        if date_folders:
+            # Use the latest date folder
+            latest_date = sorted(date_folders)[-1]
+            data_root = latest_date
+            print(f"Auto-detected latest date folder: {latest_date.name}")
+        else:
+            print("Warning: No train folder found and no date folders detected.")
+            print(f"Assuming data_root is correct: {data_root}")
     
     # Set category names (use task-name if not specified)
     if args.category_names:

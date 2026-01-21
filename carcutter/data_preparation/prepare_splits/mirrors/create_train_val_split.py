@@ -8,6 +8,7 @@ import json
 import shutil
 from pathlib import Path
 from collections import defaultdict
+from datetime import datetime
 from PIL import Image
 import numpy as np
 import cv2
@@ -60,7 +61,7 @@ def get_image_mask_pairs(images_dir, masks_dir):
     Get all image-mask pairs.
     
     Returns:
-        List of tuples (image_path, mask_path, image_basename)
+        List of tuples (image_path, mask_path, image_file)
     """
     pairs = []
     
@@ -121,15 +122,13 @@ def stratified_split(data_by_mirrors, val_ratio=0.15, random_seed=42):
     return train_data, val_data
 
 
-def save_special_cases_to_tmp(data_by_mirrors, images_dir, masks_dir, output_dir, special_counts=[0], num_random_samples=5):
+def save_special_cases_to_tmp(data_by_mirrors, output_dir, special_counts=[0], num_random_samples=5):
     """
     Save images with specific mirror counts to a tmp folder.
     Also saves random samples from all groups for verification.
     
     Args:
         data_by_mirrors: Dictionary mapping num_mirrors -> list of samples
-        images_dir: Source images directory
-        masks_dir: Source masks directory
         output_dir: Base output directory
         special_counts: List of mirror counts to save completely (e.g., [0] for exclusions)
         num_random_samples: Number of random samples to save from other groups
@@ -161,9 +160,9 @@ def save_special_cases_to_tmp(data_by_mirrors, images_dir, masks_dir, output_dir
             image_file = sample['image_file']
             image_basename = os.path.splitext(image_file)[0]
             
-            # Source paths
-            src_image = os.path.join(images_dir, image_file)
-            src_mask = os.path.join(masks_dir, image_basename + '.png')
+            # Source paths (stored in sample)
+            src_image = sample['image_path']
+            src_mask = sample['mask_path']
             
             # Destination paths
             dst_image = os.path.join(subdir, 'images', image_file)
@@ -173,7 +172,7 @@ def save_special_cases_to_tmp(data_by_mirrors, images_dir, masks_dir, output_dir
             shutil.copy2(src_mask, dst_mask)
 
 
-def copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_dir, masks_dir):
+def copy_files_to_roboflow_structure(train_data, val_data, output_dir):
     """
     Create Roboflow folder structure and copy files.
     
@@ -190,7 +189,7 @@ def copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_di
                 labels/
     """
     # Create directories
-    splits = ['train', 'val, 'test']
+    splits = ['train', 'val', 'test']
     subdirs = ['images', 'labels']
     
     for split in splits:
@@ -204,9 +203,9 @@ def copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_di
         image_file = sample['image_file']
         image_basename = os.path.splitext(image_file)[0]
         
-        # Source paths
-        src_image = os.path.join(images_dir, image_file)
-        src_mask = os.path.join(masks_dir, image_basename + '.png')
+        # Source paths (stored in sample)
+        src_image = sample['image_path']
+        src_mask = sample['mask_path']
         
         # Destination paths
         dst_image = os.path.join(output_dir, 'train', 'images', image_file)
@@ -221,9 +220,9 @@ def copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_di
         image_file = sample['image_file']
         image_basename = os.path.splitext(image_file)[0]
         
-        # Source paths
-        src_image = os.path.join(images_dir, image_file)
-        src_mask = os.path.join(masks_dir, image_basename + '.png')
+        # Source paths (stored in sample)
+        src_image = sample['image_path']
+        src_mask = sample['mask_path']
         
         # Destination paths
         dst_image = os.path.join(output_dir, 'val', 'images', image_file)
@@ -238,31 +237,54 @@ def copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_di
 def main():
     # Paths
     workspace_root = Path(__file__).parent.parent.parent.parent.parent
-    images_dir = workspace_root / 'data' / 'mirrors' / 'raw'
-    masks_dir = workspace_root / 'data' / 'mirrors' / 'preprocessed_mask' / 'mask'
-    output_dir = workspace_root / 'data' / 'mirrors' / 'training'
-    json_output = workspace_root / 'data' / 'mirrors' / 'train_val_split.json'
     
-    # Convert to strings
-    images_dir = str(images_dir)
-    masks_dir = str(masks_dir)
-    output_dir = str(output_dir)
-    json_output = str(json_output)
+    # Define batch directories
+    root_folder = '/home/raul/workspace/data'
+    batch_name_list = ["mirrors","car_segmentation/kw2551_car_segmentation", "car_segmentation/kw2552_car_interior_segmentation", "car_segmentation/kw2553_car_segmentation"]
+    
+    # Generate date stamp for output
+    date_stamp = datetime.now().strftime("%Y%m%d")
+    
+    # Output directories with date stamp
+    output_dir = f'/home/raul/workspace/data/training/mirrors/{date_stamp}'
+    json_output = f'{output_dir}/train_val_split_{date_stamp}.json'
     
     print("=" * 80)
     print("MIRRORS DATASET TRAIN/VAL SPLIT")
     print("=" * 80)
-    print(f"\nImages directory: {images_dir}")
-    print(f"Masks directory: {masks_dir}")
-    print(f"Output directory: {output_dir}")
+    print(f"\nBatches to process: {len(batch_name_list)}")
+    for batch_name in batch_name_list:
+        print(f"  - {batch_name}")
+    print(f"\nOutput directory: {output_dir}")
     print(f"JSON output: {json_output}")
     
-    # Get all image-mask pairs
+    # Get all image-mask pairs from all batches
     print("\n" + "-" * 80)
-    print("Step 1: Finding image-mask pairs...")
+    print("Step 1: Finding image-mask pairs from all batches...")
     print("-" * 80)
-    pairs = get_image_mask_pairs(images_dir, masks_dir)
-    print(f"Found {len(pairs)} image-mask pairs")
+    
+    all_pairs = []
+    for batch_name in batch_name_list:
+        folder_path = f"{root_folder}/{batch_name}"
+        images_dir = f"{folder_path}/raw"
+        masks_dir = f"{folder_path}/preprocessed_mask/mask"
+        
+        print(f"\n  Processing batch: {batch_name}")
+        print(f"    Images: {images_dir}")
+        print(f"    Masks: {masks_dir}")
+        
+        if not os.path.exists(images_dir):
+            print(f"    WARNING: Images directory not found, skipping batch")
+            continue
+        if not os.path.exists(masks_dir):
+            print(f"    WARNING: Masks directory not found, skipping batch")
+            continue
+        
+        batch_pairs = get_image_mask_pairs(images_dir, masks_dir)
+        print(f"    Found {len(batch_pairs)} pairs")
+        all_pairs.extend(batch_pairs)
+    
+    print(f"\nTotal pairs from all batches: {len(all_pairs)}")
     
     # Count mirrors in each image
     print("\n" + "-" * 80)
@@ -270,20 +292,22 @@ def main():
     print("-" * 80)
     data_by_mirrors = defaultdict(list)
     
-    for i, (image_path, mask_path, image_file) in enumerate(pairs):
+    for i, (image_path, mask_path, image_file) in enumerate(all_pairs):
         if (i + 1) % 100 == 0:
-            print(f"  Processed {i + 1}/{len(pairs)} images...")
+            print(f"  Processed {i + 1}/{len(all_pairs)} images...")
         
         num_mirrors = count_mirrors_in_mask(mask_path)
         
         sample = {
             'image_file': image_file,
+            'image_path': image_path,
+            'mask_path': mask_path,
             'num_mirrors': num_mirrors
         }
         
         data_by_mirrors[num_mirrors].append(sample)
     
-    print(f"Processed all {len(pairs)} images")
+    print(f"Processed all {len(all_pairs)} images")
     
     # Print statistics
     print("\n" + "-" * 80)
@@ -292,7 +316,7 @@ def main():
     print(f"\nDistribution of mirrors per image:")
     for num_mirrors in sorted(data_by_mirrors.keys()):
         count = len(data_by_mirrors[num_mirrors])
-        percentage = (count / len(pairs)) * 100
+        percentage = (count / len(all_pairs)) * 100
         print(f"  {num_mirrors} mirror(s): {count:4d} images ({percentage:5.2f}%)")
     
     # Exclude images with 0 mirrors from training/validation split
@@ -311,6 +335,10 @@ def main():
     
     # Calculate total after exclusion
     total_after_exclusion = len(train_data) + len(val_data)
+    
+    if total_after_exclusion == 0:
+        print("\nERROR: No images found in any batch. Please check the directory paths.")
+        return
     
     print(f"\nSplit results:")
     print(f"  Training set:   {len(train_data):4d} images ({len(train_data)/total_after_exclusion*100:.2f}%)")
@@ -340,8 +368,8 @@ def main():
     # Re-add excluded images for saving
     if excluded_zero_mirrors:
         data_by_mirrors[0] = excluded_zero_mirrors
-    save_special_cases_to_tmp(data_by_mirrors, images_dir, masks_dir, 
-                              str(workspace_root / 'data' / 'mirrors'), 
+    save_special_cases_to_tmp(data_by_mirrors,
+                              output_dir, 
                               special_counts=[0], num_random_samples=5)
     
     # Save to JSON
@@ -350,7 +378,9 @@ def main():
     print("-" * 80)
     
     split_info = {
-        'total_images': len(pairs),
+        'batches': batch_name_list,
+        'date': date_stamp,
+        'total_images': len(all_pairs),
         'excluded_images': len(excluded_zero_mirrors) if excluded_zero_mirrors else 0,
         'train_size': len(train_data),
         'val_size': len(val_data),
@@ -374,7 +404,7 @@ def main():
     print("Step 8: Creating Roboflow folder structure")
     print("-" * 80)
     
-    copy_files_to_roboflow_structure(train_data, val_data, output_dir, images_dir, masks_dir)
+    copy_files_to_roboflow_structure(train_data, val_data, output_dir)
     
     print("\n" + "=" * 80)
     print("COMPLETE!")
