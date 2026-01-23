@@ -6,24 +6,42 @@ defaults:
 # Mirror Detection - SAM3 Finetuning Configuration WITH PARAMETER FREEZING
 # ============================================================================
 # This configuration extends the base mirror finetuning config with systematic
-# parameter freezing options as requested in GitHub issue #284.
+# parameter freezing options.
+#
+# SAM3 IMAGE MODEL ARCHITECTURE:
+# ==============================
+# BACKBONE (pretrained):
+#   - vision_backbone:    backbone.vision_backbone.*
+#   - language_backbone:  backbone.language_backbone.*
+#
+# GEOMETRY ENCODER (encodes spatial prompts like boxes/points):
+#   - geometry_encoder:   geometry_encoder.*
+#
+# TRANSFORMER:
+#   - transformer_encoder: transformer.encoder.*
+#   - transformer_decoder: transformer.decoder.*
+#
+# OUTPUT HEADS:
+#   - segmentation_head:  segmentation_head.*
+#   - dot_prod_scoring:   dot_prod_scoring.*
 #
 # FREEZING OPTIONS:
-# - freeze_config.vision_backbone: Freeze the ViT image encoder (~300M params)
-# - freeze_config.language_backbone: Freeze the text encoder
-# - freeze_config.memory_encoder: Freeze memory encoding components
-# - freeze_config.mask_decoder: Freeze the mask prediction decoder
-# - freeze_config.prompt_encoder: Freeze prompt encoding layers
-# - freeze_config.transformer_decoder: Freeze transformer decoder layers
+# - freeze_config.vision_backbone: Freeze ViT image encoder
+# - freeze_config.language_backbone: Freeze CLIP text encoder
+# - freeze_config.geometry_encoder: Freeze spatial prompt encoder
+# - freeze_config.transformer_encoder: Freeze vision-language fusion
+# - freeze_config.transformer_decoder: Freeze object query decoder
+# - freeze_config.segmentation_head: Freeze pixel decoder + mask predictor
+# - freeze_config.dot_prod_scoring: Freeze classification scoring
 # - freeze_config.custom_patterns: Additional patterns to freeze (Unix glob)
 # - freeze_config.freeze_all_except: Freeze everything EXCEPT these patterns
 # - freeze_config.unfreeze_patterns: Explicitly unfreeze these patterns
-# - freeze_config.vision_backbone_num_frozen_layers: Freeze first N ViT layers
+# - freeze_config.vision_backbone_num_frozen_layers: Freeze first N ViT blocks
 #
 # COMMON TRAINING STRATEGIES:
 # 1. Full fine-tuning: All freeze options = false (default)
-# 2. Decoder-only: vision_backbone=true, language_backbone=true
-# 3. Adapter-style: freeze_all_except with adapter layer patterns
+# 2. Backbone-frozen: vision_backbone=true, language_backbone=true
+# 3. Minimal training: freeze backbones + geometry_encoder
 # 4. Gradual unfreezing: vision_backbone_num_frozen_layers with decreasing N
 # ============================================================================
 
@@ -31,8 +49,8 @@ defaults:
 # Paths Configuration (Change this to your own paths)
 # ============================================================================
 paths:
-  dataset_root: /home/raul/workspace/data/training/mirrors/260120
-  experiment_log_dir: /home/raul/workspace/experiments/mirror_sam3_frozen_260120
+  dataset_root: /home/raul/workspace/data/training/mirrors/interior_260122
+  experiment_log_dir: /home/raul/workspace/experiments/mirror_sam3_interior_frozen_260122
   bpe_path: /home/raul/workspace/cc_segmentation_sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
 
 # Task configuration
@@ -261,20 +279,41 @@ trainer:
   # This section controls which parts of the model are frozen during training.
   # Frozen parameters will have requires_grad=False and won't be updated.
   #
+  # SAM3 IMAGE MODEL ARCHITECTURE (actual parameter names):
+  # =======================================================
+  # BACKBONE (pretrained):
+  #   - vision_backbone:    backbone.vision_backbone.*
+  #   - language_backbone:  backbone.language_backbone.*
+  #
+  # GEOMETRY ENCODER (encodes spatial prompts like boxes/points):
+  #   - geometry_encoder:   geometry_encoder.*
+  #
+  # TRANSFORMER:
+  #   - transformer_encoder: transformer.encoder.*
+  #   - transformer_decoder: transformer.decoder.*
+  #
+  # OUTPUT HEADS:
+  #   - segmentation_head:  segmentation_head.*
+  #   - dot_prod_scoring:   dot_prod_scoring.*
+  #
+  # VIDEO COMPONENTS (only in video models):
+  #   - memory_encoder, memory_attention, obj_ptr
+  #
   # RECOMMENDED STRATEGIES:
   #
   # Strategy 1: Full Fine-tuning (all false - train everything)
   #   Best for: Large datasets, when you want maximum adaptation
   #   Memory: ~24GB+ GPU
   #
-  # Strategy 2: Freeze Vision Backbone (vision_backbone: true)
+  # Strategy 2: Freeze Backbones Only (vision + language = true)
   #   Best for: Small-medium datasets, faster training, less overfitting
   #   Memory: ~12-16GB GPU
-  #   This freezes ~300M parameters of the ViT image encoder
+  #   Trains: geometry_encoder, transformer, heads
   #
-  # Strategy 3: Freeze Both Backbones (vision + language)
-  #   Best for: Very small datasets, adapter-style training
-  #   Memory: ~8-12GB GPU
+  # Strategy 3: Freeze Backbones + Geometry Encoder  
+  #   Best for: Very small datasets, focus on decoder adaptation
+  #   Memory: ~10-14GB GPU
+  #   Trains: transformer, heads
   #
   # Strategy 4: Gradual Unfreezing (vision_backbone_num_frozen_layers)
   #   Best for: Transfer learning with layer-wise control
@@ -285,42 +324,66 @@ trainer:
   # ============================================================================
   
   freeze_config:
-    # Main model components (set to true to freeze)
-    vision_backbone: true          # Freeze ViT image encoder (~300M params)
-    language_backbone: true        # Freeze CLIP text encoder
-    memory_encoder: false          # Keep memory encoder trainable
-    memory_attention: false        # Keep memory attention trainable
-    mask_decoder: false            # Keep mask decoder trainable
-    prompt_encoder: false          # Keep prompt encoder trainable
-    transformer_decoder: false     # Keep transformer decoder trainable
-    transformer_encoder: false     # Keep transformer encoder trainable
-    obj_ptr: false                 # Keep object pointer trainable
+    # ==========================================================================
+    # BACKBONE COMPONENTS (pretrained, typically frozen for fine-tuning)
+    # ==========================================================================
+    vision_backbone: true          # backbone.vision_backbone.*
+    language_backbone: true        # backbone.language_backbone.*
     
-    # Fine-grained layer freezing (optional)
+    # ==========================================================================
+    # GEOMETRY ENCODER (encodes boxes/points spatial prompts)
+    # ==========================================================================
+    geometry_encoder: true         # geometry_encoder.*
+    
+    # ==========================================================================
+    # TRANSFORMER COMPONENTS
+    # ==========================================================================
+    transformer_encoder: false     # transformer.encoder.*
+    transformer_decoder: false     # transformer.decoder.*
+    
+    # ==========================================================================
+    # OUTPUT HEADS
+    # ==========================================================================
+    segmentation_head: false       # segmentation_head.*
+    dot_prod_scoring: false        # dot_prod_scoring.*
+    
+    # ==========================================================================
+    # VIDEO/TRACKING COMPONENTS (only present in video models, safe to ignore)
+    # ==========================================================================
+    memory_encoder: false          # memory_encoder.* (video only)
+    memory_attention: false        # memory_attention.* (video only)
+    obj_ptr: false                 # obj_ptr.* (video only)
+    
+    # ==========================================================================
+    # FINE-GRAINED LAYER FREEZING
+    # ==========================================================================
     # Freeze only first N layers of vision backbone (null = use vision_backbone flag)
     # Useful for gradual unfreezing - start with high N, decrease over training
-    vision_backbone_num_frozen_layers: null  # e.g., 12 to freeze first 12 ViT blocks
+    # ViT has 32 blocks (0-31), so valid values are 0-32
+    vision_backbone_num_frozen_layers: null  # e.g., 24 to freeze first 24 ViT blocks
     
     # Custom patterns to freeze (Unix glob syntax)
     # Examples:
     # - "backbone.vision_backbone.trunk.blocks.0.*"  # First ViT block
     # - "backbone.vision_backbone.trunk.blocks.[0-5].*"  # First 6 blocks
+    # - "geometry_encoder.encode.0.*"  # First geometry encoder layer
+    # - "transformer.decoder.layers.0.*"  # First decoder layer
     # - "*.bias"  # All bias terms
     custom_patterns: []
     
     # Freeze EVERYTHING except these patterns (for adapter-style training)
     # When set, ignores all other freeze settings and only trains matched params
     # Examples:
-    # - "adapter.*"  # Only train adapter layers
-    # - "*.adapter.*"  # Train any adapter submodule
-    # - "mask_decoder.output_upscaling.*"  # Only train upscaling layers
+    # - "segmentation_head.*"  # Only train segmentation head
+    # - "transformer.decoder.layers.5.*"  # Only train last decoder layer
+    # - "geometry_encoder.*"  # Only train geometry encoder
     freeze_all_except: []
     
     # Patterns to explicitly unfreeze (highest priority, overrides other settings)
     # Useful for unfreezing specific layers in a mostly-frozen model
     # Examples:
-    # - "backbone.vision_backbone.trunk.blocks.23.*"  # Unfreeze last ViT block
-    # - "*.layer_norm*"  # Unfreeze all layer norms
+    # - "backbone.vision_backbone.trunk.blocks.31.*"  # Unfreeze last ViT block
+    # - "backbone.language_backbone.encoder.ln_final.*"  # Unfreeze final layer norm
     unfreeze_patterns: []
 
   distributed:

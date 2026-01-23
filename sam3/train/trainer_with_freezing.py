@@ -8,18 +8,51 @@ Modified trainer with systematic parameter freezing support.
 This trainer extends the base SAM3 trainer to allow freezing specific parts
 of the network via YAML configuration. 
 
+SAM3 IMAGE MODEL ARCHITECTURE:
+==============================
+The model has the following components (with actual parameter name patterns):
+
+BACKBONE (pretrained encoders - typically frozen):
+  - backbone.vision_backbone.*  : ViT image encoder (~300M params)
+  - backbone.language_backbone.*: CLIP text encoder (~150M params)
+
+GEOMETRY ENCODER (encodes spatial prompts):
+  - geometry_encoder.*          : Box/point prompt encoder (~7M params)
+
+TRANSFORMER (fusion and decoding):
+  - transformer.encoder.*       : Vision-language fusion (~12M params)
+  - transformer.decoder.*       : Object query decoder (~15M params)
+
+OUTPUT HEADS:
+  - segmentation_head.*         : Pixel decoder + mask predictor (~5M params)
+  - dot_prod_scoring.*          : Classification scoring (~2M params)
+
+VIDEO COMPONENTS (only in video models):
+  - memory_encoder.*            : Memory encoding
+  - memory_attention.*          : Memory attention
+  - obj_ptr.*                   : Object pointer
+
 Usage in YAML config:
     trainer:
       freeze_config:
-        vision_backbone: true      # Freeze the image encoder (ViT)
-        language_backbone: true    # Freeze the text encoder
-        memory_encoder: false      # Keep memory encoder trainable
-        mask_decoder: false        # Keep mask decoder trainable
-        prompt_encoder: false      # Keep prompt encoder trainable
-        transformer_decoder: false # Keep transformer decoder trainable
-        custom_patterns:           # Additional patterns to freeze (Unix glob patterns)
-          - "backbone.vision_backbone.trunk.blocks.0.*"
-          - "backbone.vision_backbone.trunk.blocks.1.*"
+        # Backbone (pretrained)
+        vision_backbone: true       # Freeze ViT image encoder
+        language_backbone: true     # Freeze CLIP text encoder
+        
+        # Geometry encoder
+        geometry_encoder: false     # Train geometry/prompt encoder
+        
+        # Transformer
+        transformer_encoder: false  # Train vision-language fusion
+        transformer_decoder: false  # Train object query decoder
+        
+        # Output heads
+        segmentation_head: false    # Train segmentation head
+        dot_prod_scoring: false     # Train classification scoring
+        
+        # Fine-grained control
+        custom_patterns: []         # Additional patterns to freeze
+        unfreeze_patterns: []       # Patterns to explicitly unfreeze
 """
 
 import contextlib
@@ -99,57 +132,113 @@ class FreezeConfig:
     This dataclass defines which components of SAM3 should be frozen during training.
     Setting a component to True will freeze all its parameters (requires_grad=False).
     
-    Components:
-        vision_backbone: The ViT image encoder (backbone.vision_backbone.*)
-        language_backbone: The text/language encoder (backbone.language_backbone.*)
-        memory_encoder: Memory encoding components (memory_encoder.*)
-        memory_attention: Memory attention layers (memory_attention.*)
-        mask_decoder: The mask prediction decoder (mask_decoder.*, sam_mask_decoder.*)
-        prompt_encoder: Prompt encoding layers (prompt_encoder.*, sam_prompt_encoder.*)
-        transformer_decoder: Transformer decoder layers (transformer.decoder.*)
-        transformer_encoder: Transformer encoder layers (transformer.encoder.*)
-        obj_ptr: Object pointer components (obj_ptr.*)
+    SAM3 Image Model Architecture (actual parameter names):
+    ========================================================
+    
+    BACKBONE (Pretrained encoders):
+        vision_backbone: ViT image encoder (backbone.vision_backbone.*)
+            - trunk.pos_embed, trunk.patch_embed, trunk.blocks.0-31
+            - ~300M parameters
+        language_backbone: CLIP text encoder (backbone.language_backbone.*)
+            - encoder.transformer.resblocks.0-23, encoder.positional_embedding
+            - ~150M parameters
+    
+    GEOMETRY ENCODER (encodes spatial prompts like boxes/points):
+        geometry_encoder: Spatial prompt encoder (geometry_encoder.*)
+            - label_embed, cls_embed, points/boxes projections
+            - encode.0-2 (transformer layers), encode_norm
+            - ~7M parameters
+    
+    TRANSFORMER (fusion and decoding):
+        transformer_encoder: Encoder for vision-language fusion (transformer.encoder.*)
+            - layers.0-5 (cross-attention to image features)
+            - ~12M parameters
+        transformer_decoder: Decoder for object queries (transformer.decoder.*)
+            - layers.0-5, bbox_embed, query_embed, presence_token
+            - ~15M parameters
+    
+    HEADS (task-specific outputs):
+        segmentation_head: Pixel decoder + mask predictor (segmentation_head.*)
+            - pixel_decoder.conv_layers, mask_predictor.mask_embed
+            - ~5M parameters
+        dot_prod_scoring: Classification scoring (dot_prod_scoring.*)
+            - prompt_mlp, prompt_proj, hs_proj
+            - ~2M parameters
+    
+    VIDEO/TRACKING (only for video models):
+        memory_encoder: Memory encoding for video (memory_encoder.*)
+        memory_attention: Memory attention for video (memory_attention.*)
+        obj_ptr: Object pointer for tracking (obj_ptr.*)
+    
+    Args:
         custom_patterns: List of additional Unix glob patterns to freeze
         freeze_all_except: If set, freeze everything EXCEPT these patterns
         unfreeze_patterns: Patterns to explicitly unfreeze (overrides other settings)
     """
-    # Main model components
-    vision_backbone: bool = False
-    language_backbone: bool = False
-    memory_encoder: bool = False
-    memory_attention: bool = False
-    mask_decoder: bool = False
-    prompt_encoder: bool = False
-    transformer_decoder: bool = False
-    transformer_encoder: bool = False
-    obj_ptr: bool = False
+    # ==========================================================================
+    # BACKBONE COMPONENTS (pretrained, typically frozen for fine-tuning)
+    # ==========================================================================
+    vision_backbone: bool = False      # backbone.vision_backbone.* (~300M params)
+    language_backbone: bool = False    # backbone.language_backbone.* (~150M params)
     
-    # Fine-grained control
+    # ==========================================================================
+    # GEOMETRY ENCODER (encodes boxes/points spatial prompts)
+    # ==========================================================================
+    geometry_encoder: bool = False     # geometry_encoder.* (~7M params)
+    
+    # ==========================================================================
+    # TRANSFORMER COMPONENTS
+    # ==========================================================================
+    transformer_encoder: bool = False  # transformer.encoder.* (~12M params)
+    transformer_decoder: bool = False  # transformer.decoder.* (~15M params)
+    
+    # ==========================================================================
+    # OUTPUT HEADS
+    # ==========================================================================
+    segmentation_head: bool = False    # segmentation_head.* (~5M params)
+    dot_prod_scoring: bool = False     # dot_prod_scoring.* (~2M params)
+    
+    # ==========================================================================
+    # VIDEO/TRACKING COMPONENTS (only present in video models)
+    # ==========================================================================
+    memory_encoder: bool = False       # memory_encoder.* (video only)
+    memory_attention: bool = False     # memory_attention.* (video only)
+    obj_ptr: bool = False              # obj_ptr.* (video only)
+    
+    # ==========================================================================
+    # FINE-GRAINED CONTROL
+    # ==========================================================================
     custom_patterns: List[str] = field(default_factory=list)
     freeze_all_except: List[str] = field(default_factory=list)
     unfreeze_patterns: List[str] = field(default_factory=list)
     
     # Vision backbone layer-specific freezing
-    vision_backbone_num_frozen_layers: Optional[int] = None  # Freeze first N layers
+    vision_backbone_num_frozen_layers: Optional[int] = None  # Freeze first N ViT blocks
     
     def get_freeze_patterns(self) -> List[str]:
         """Get all patterns that should be frozen based on configuration.
         
-        Returns only the primary SAM3 patterns, not alternative/legacy patterns.
+        Returns list of Unix glob patterns matching SAM3 parameter names.
         """
         patterns = []
         
-        # Map component flags to SAM3 parameter name patterns
-        # Note: Using only the primary SAM3 patterns, not alternatives
+        # Map component flags to actual SAM3 parameter name patterns
+        # These patterns are verified against the actual model architecture
         component_patterns = {
+            # Backbone
             'vision_backbone': ['backbone.vision_backbone.*'],
             'language_backbone': ['backbone.language_backbone.*'],
+            # Geometry encoder  
+            'geometry_encoder': ['geometry_encoder.*'],
+            # Transformer
+            'transformer_encoder': ['transformer.encoder.*'],
+            'transformer_decoder': ['transformer.decoder.*'],
+            # Heads
+            'segmentation_head': ['segmentation_head.*'],
+            'dot_prod_scoring': ['dot_prod_scoring.*'],
+            # Video components (only present in video models)
             'memory_encoder': ['memory_encoder.*'],
             'memory_attention': ['memory_attention.*'],
-            'mask_decoder': ['mask_decoder.*', 'sam_mask_decoder.*'],
-            'prompt_encoder': ['prompt_encoder.*', 'sam_prompt_encoder.*'],
-            'transformer_decoder': ['transformer.decoder.*'],
-            'transformer_encoder': ['transformer.encoder.*'],
             'obj_ptr': ['obj_ptr.*'],
         }
         
@@ -157,12 +246,13 @@ class FreezeConfig:
         for component, should_freeze in [
             ('vision_backbone', self.vision_backbone),
             ('language_backbone', self.language_backbone),
+            ('geometry_encoder', self.geometry_encoder),
+            ('transformer_encoder', self.transformer_encoder),
+            ('transformer_decoder', self.transformer_decoder),
+            ('segmentation_head', self.segmentation_head),
+            ('dot_prod_scoring', self.dot_prod_scoring),
             ('memory_encoder', self.memory_encoder),
             ('memory_attention', self.memory_attention),
-            ('mask_decoder', self.mask_decoder),
-            ('prompt_encoder', self.prompt_encoder),
-            ('transformer_decoder', self.transformer_decoder),
-            ('transformer_encoder', self.transformer_encoder),
             ('obj_ptr', self.obj_ptr),
         ]:
             if should_freeze:
