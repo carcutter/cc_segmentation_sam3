@@ -240,13 +240,13 @@ def main():
     
     # Define batch directories
     root_folder = '/home/raul/workspace/data'
-    batch_name_list = ["mirrors","car_segmentation/kw2551_car_segmentation", "car_segmentation/kw2552_car_interior_segmentation", "car_segmentation/kw2553_car_segmentation"]
+    batch_name_list = ["mirrors", "car_segmentation/kw2552_car_interior_segmentation"]
     
     # Generate date stamp for output
     date_stamp = datetime.now().strftime("%Y%m%d")
     
     # Output directories with date stamp
-    output_dir = f'/home/raul/workspace/data/training/mirrors/{date_stamp}'
+    output_dir = f'/home/raul/workspace/data/training/mirrors/interior_{date_stamp}'
     json_output = f'{output_dir}/train_val_split_{date_stamp}.json'
     
     print("=" * 80)

@@ -205,16 +205,26 @@ def main():
     # ========================= CONFIGURATION =========================
     
     # Input/output paths
-    batch_name_list = ["kw2551_car_segmentation", "kw2552_car_interior_segmentation", "kw2553_car_segmentation"]  
+    batch_name_list = ["kw2551_car_segmentation", "kw2552_car_interior_segmentation", "kw2553_car_segmentation", "kw2602_car_segmentation"]
+    task_name =  "holes"#"outline" # "holes"
     for batch_name in batch_name_list:
         folder_path = f"/home/raul/workspace/data/car_segmentation/{batch_name}"
         input_dir = f"{folder_path}/masks"
-        output_dir = f"{folder_path}/preprocessed_mask/mask"
+        output_dir = f"{folder_path}/preprocessed_mask/{task_name}/mask"
         
         # Category IDs to extract (RGB format)
         # Example: Extract green (mirror) pixels only
-        category_ids = [(0, 255, 0)]  # Green color in RGB
-        
+        # category_ids =  [(0, 255, 0)]  # Green color in RGB
+        category_ids = [(  0,   0, 255)] #-> Blue
+        # category_ids = [ 
+        #     (255,   0,   0), #-> Red (Car/Vehicle)
+        #     (0,   255,   0),  #-> Green (Mirror)
+        #     (128, 128, 128),  # -> Gray
+        #     (200,   0, 255),  # -> Purple/Magenta
+        #     (255,   0,   0),  # -> Red (Car/Vehicle)
+        #     (255, 165,   0),  # -> Orange
+        # ]
+
         # To extract multiple categories (merge them into one binary mask):
         # category_ids = [(255, 0, 0), (0, 255, 0)]  # Red + Green
         
