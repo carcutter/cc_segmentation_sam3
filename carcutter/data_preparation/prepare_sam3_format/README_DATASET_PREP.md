@@ -205,6 +205,20 @@ The script automatically detects multiple object instances in each image and cre
 ### Polygon Annotations
 Binary masks are converted to polygon contours, which SAM3 uses for training. The polygons are simplified to reduce memory usage while maintaining accuracy.
 
+### Hole Support
+The script properly handles segmentations with holes (e.g., car outlines with ski-box attachments where background shows through). Holes are detected automatically using contour hierarchy and included in the COCO annotation format:
+
+```json
+"segmentation": [
+  [x1, y1, x2, y2, ...],  // Outer boundary polygon
+  [x1, y1, x2, y2, ...]   // Hole polygon (if present)
+]
+```
+
+- Outer contours and their child (hole) contours are grouped together
+- Area calculation accounts for holes (outer area minus hole areas)
+- Holes smaller than `min_hole_area` (default: 50 pixels) are filtered out
+
 ### Quality Filtering
 - Minimum area threshold filters out noise and small artifacts
 - Contour approximation reduces polygon complexity
@@ -238,8 +252,11 @@ The generated annotations follow the standard COCO format:
       "id": 1,
       "image_id": 1,
       "category_id": 1,
-      "segmentation": [[x1, y1, x2, y2, ...]],  // Polygon coordinates
-      "area": 12345.67,
+      "segmentation": [
+        [x1, y1, x2, y2, ...],  // Outer polygon
+        [x1, y1, x2, y2, ...]   // Hole polygon (optional, if holes exist)
+      ],
+      "area": 12345.67,  // Outer area minus hole areas
       "bbox": [x, y, width, height],
       "iscrowd": 0
     }

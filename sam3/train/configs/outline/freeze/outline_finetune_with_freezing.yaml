@@ -49,8 +49,8 @@ defaults:
 # Paths Configuration (Change this to your own paths)
 # ============================================================================
 paths:
-  dataset_root: /home/raul/workspace/data/training/outline/outline_20260127
-  experiment_log_dir: /home/raul/workspace/experiments/outline_sam3_frozen_260129_vehicle
+  dataset_root: /home/raul/workspace/data/training/outline/outline_20260130
+  experiment_log_dir: /home/raul/workspace/experiments/outline_sam3_frozen_260130
   bpe_path: /home/raul/workspace/cc_segmentation_sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
 
 # Task configuration

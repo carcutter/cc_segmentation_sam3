@@ -21,15 +21,57 @@ def load_coco_annotations(json_path: Path) -> dict:
         return json.load(f)
 
 
-def draw_polygon(image: np.ndarray, polygon: List[float], color: Tuple[int, int, int], thickness: int = 2):
+def draw_polygon(image: np.ndarray, polygon: List[float], color: Tuple[int, int, int], thickness: int = 2, fill: bool = True):
     """Draw a polygon on the image."""
     points = np.array(polygon).reshape(-1, 2).astype(np.int32)
     cv2.polylines(image, [points], isClosed=True, color=color, thickness=thickness)
     
-    # Fill with semi-transparent color
+    if fill:
+        # Fill with semi-transparent color
+        overlay = image.copy()
+        cv2.fillPoly(overlay, [points], color)
+        cv2.addWeighted(overlay, 0.3, image, 0.7, 0, image)
+
+
+def draw_segmentation_with_holes(image: np.ndarray, segmentation: List[List[float]], color: Tuple[int, int, int], thickness: int = 2):
+    """
+    Draw a segmentation with holes on the image.
+    
+    The first polygon is the outer boundary, subsequent polygons are holes.
+    Holes are rendered by "cutting out" from the filled area.
+    
+    Args:
+        image: Image to draw on
+        segmentation: List of polygons [outer, hole1, hole2, ...]
+        color: RGB color tuple
+        thickness: Line thickness for borders
+    """
+    if not segmentation:
+        return
+    
+    # Convert all polygons to numpy arrays
+    all_points = [np.array(poly).reshape(-1, 2).astype(np.int32) for poly in segmentation]
+    
+    # Draw all polygon outlines
+    for points in all_points:
+        cv2.polylines(image, [points], isClosed=True, color=color, thickness=thickness)
+    
+    # Create a mask for the filled region (outer minus holes)
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    
+    # Fill outer polygon
+    cv2.fillPoly(mask, [all_points[0]], 255)
+    
+    # Cut out holes
+    for hole_points in all_points[1:]:
+        cv2.fillPoly(mask, [hole_points], 0)
+    
+    # Apply semi-transparent fill using the mask
     overlay = image.copy()
-    cv2.fillPoly(overlay, [points], color)
-    cv2.addWeighted(overlay, 0.3, image, 0.7, 0, image)
+    overlay[mask > 0] = (
+        np.array(overlay[mask > 0], dtype=np.float32) * 0.7 + 
+        np.array(color, dtype=np.float32) * 0.3
+    ).astype(np.uint8)
 
 
 def draw_bbox(image: np.ndarray, bbox: List[float], color: Tuple[int, int, int], thickness: int = 2):
@@ -75,10 +117,15 @@ def visualize_sample(
         category_id = ann['category_id']
         category_name = categories[category_id]['name']
         
-        # Draw polygon
+        # Draw segmentation (handles both simple polygons and polygons with holes)
         if show_polygon and 'segmentation' in ann:
-            for polygon in ann['segmentation']:
-                draw_polygon(image, polygon, color)
+            segmentation = ann['segmentation']
+            if len(segmentation) > 1:
+                # Multiple polygons: first is outer, rest are holes
+                draw_segmentation_with_holes(image, segmentation, color)
+            elif len(segmentation) == 1:
+                # Single polygon, no holes
+                draw_polygon(image, segmentation[0], color)
         
         # Draw bounding box
         if show_bbox and 'bbox' in ann:

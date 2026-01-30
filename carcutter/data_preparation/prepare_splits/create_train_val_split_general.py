@@ -23,13 +23,13 @@ import cv2
 # ========================= CONFIGURATION =========================
 
 # Task configuration
-TASK_NAME = "holes"  # Change to: "outline", "holes", "mirrors", etc.
+TASK_NAME = "outline"  # Change to: "outline", "holes", "mirrors", etc.
 
 # Batch configuration
 ROOT_FOLDER = "/home/raul/workspace/data"
 BATCH_NAME_LIST = [
     "car_segmentation/kw2551_car_segmentation",
-    "car_segmentation/kw2552_car_interior_segmentation",
+    #"car_segmentation/kw2552_car_interior_segmentation",
     "car_segmentation/kw2553_car_segmentation",
     "car_segmentation/kw2602_car_segmentation"
 ]

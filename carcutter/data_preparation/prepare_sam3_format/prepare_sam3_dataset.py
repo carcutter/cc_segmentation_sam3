@@ -41,16 +41,23 @@ def find_matching_mask(image_path: Path, mask_dir: Path) -> Path:
     raise FileNotFoundError(f"No matching mask found for {image_path.name}")
 
 
-def extract_polygons_from_mask(mask: np.ndarray, min_area: int = 100) -> List[List[float]]:
+def extract_polygons_from_mask(mask: np.ndarray, min_area: int = 100, min_hole_area: int = 50) -> List[List[List[float]]]:
     """
-    Extract polygon contours from a binary mask.
+    Extract polygon contours from a binary mask, including holes.
     
     Args:
         mask: Binary mask where white (255) represents the object
-        min_area: Minimum area threshold to filter out small noise
+        min_area: Minimum area threshold to filter out small outer contours
+        min_hole_area: Minimum area threshold for holes (smaller than min_area to capture small holes)
         
     Returns:
-        List of polygons, where each polygon is [x1, y1, x2, y2, ...]
+        List of segmentations, where each segmentation is a list of polygons.
+        The first polygon is the outer boundary, subsequent polygons are holes.
+        Each polygon is [x1, y1, x2, y2, ...]
+        
+    Note:
+        In COCO format, holes are represented as additional polygons in the segmentation list.
+        The winding order differentiates outer boundaries from holes.
     """
     # Ensure mask is binary
     if len(mask.shape) == 3:
@@ -59,28 +66,70 @@ def extract_polygons_from_mask(mask: np.ndarray, min_area: int = 100) -> List[Li
     # Threshold to ensure binary
     _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
     
-    # Find contours
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Find contours with hierarchy to detect holes
+    # RETR_CCOMP retrieves all contours and organizes them into a two-level hierarchy:
+    # - External contours (outer boundaries) at the top level
+    # - Hole contours (inner boundaries) at the second level
+    contours, hierarchy = cv2.findContours(binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     
-    polygons = []
-    for contour in contours:
-        # Filter small contours
+    if hierarchy is None or len(contours) == 0:
+        return []
+    
+    hierarchy = hierarchy[0]  # Get the actual hierarchy array
+    
+    segmentations = []
+    
+    # Process each outer contour (hierarchy[i][3] == -1 means no parent, i.e., outer contour)
+    for i, contour in enumerate(contours):
+        # Check if this is an outer contour (no parent)
+        if hierarchy[i][3] != -1:
+            continue  # Skip holes here, they'll be processed with their parent
+        
+        # Filter small outer contours
         area = cv2.contourArea(contour)
         if area < min_area:
             continue
         
-        # Simplify contour to reduce points
+        # Simplify outer contour
         epsilon = 0.001 * cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, epsilon, True)
         
         # Convert to flat list [x1, y1, x2, y2, ...]
-        polygon = approx.flatten().tolist()
+        outer_polygon = approx.flatten().tolist()
         
         # Need at least 6 coordinates (3 points) for a valid polygon
-        if len(polygon) >= 6:
-            polygons.append(polygon)
+        if len(outer_polygon) < 6:
+            continue
+        
+        # Start segmentation with outer polygon
+        segmentation = [outer_polygon]
+        
+        # Find all holes (children) of this outer contour
+        # hierarchy[i][2] is the index of the first child
+        child_idx = hierarchy[i][2]
+        
+        while child_idx != -1:
+            hole_contour = contours[child_idx]
+            hole_area = cv2.contourArea(hole_contour)
+            
+            # Filter small holes
+            if hole_area >= min_hole_area:
+                # Simplify hole contour
+                hole_epsilon = 0.001 * cv2.arcLength(hole_contour, True)
+                hole_approx = cv2.approxPolyDP(hole_contour, hole_epsilon, True)
+                
+                hole_polygon = hole_approx.flatten().tolist()
+                
+                # Add hole if valid
+                if len(hole_polygon) >= 6:
+                    segmentation.append(hole_polygon)
+            
+            # Move to next sibling hole
+            child_idx = hierarchy[child_idx][0]
+        
+        segmentations.append(segmentation)
     
-    return polygons
+    return segmentations
 
 
 def calculate_bbox_from_polygon(polygon: List[float]) -> List[float]:
@@ -307,10 +356,10 @@ def process_single_image(
     # Read mask
     mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
     
-    # Extract polygons for each instance
-    polygons = extract_polygons_from_mask(mask, min_area)
+    # Extract segmentations for each instance (each segmentation includes outer polygon + holes)
+    segmentations = extract_polygons_from_mask(mask, min_area)
     
-    if not polygons:
+    if not segmentations:
         return None
     
     # Create image info
@@ -321,12 +370,19 @@ def process_single_image(
         "width": width
     }
     
-    # Create annotations for each polygon (each mirror instance)
+    # Create annotations for each segmentation (each object instance)
+    # Each segmentation is a list of polygons: [outer_polygon, hole1, hole2, ...]
     # For each instance, create one annotation per category (enables multi-prompt training)
     annotations = []
-    for polygon in polygons:
-        bbox = calculate_bbox_from_polygon(polygon)
-        area = calculate_area_from_polygon(polygon)
+    for segmentation in segmentations:
+        # The first polygon is the outer boundary, use it for bbox and area calculation
+        outer_polygon = segmentation[0]
+        bbox = calculate_bbox_from_polygon(outer_polygon)
+        
+        # Calculate area: outer area minus hole areas
+        outer_area = calculate_area_from_polygon(outer_polygon)
+        hole_areas = sum(calculate_area_from_polygon(hole) for hole in segmentation[1:])
+        area = outer_area - hole_areas
         
         # Create one annotation for each category ID (all refer to same object)
         for category_id in category_ids:
@@ -334,7 +390,7 @@ def process_single_image(
                 "id": annotation_id,
                 "image_id": image_id,
                 "category_id": category_id,
-                "segmentation": [polygon],  # COCO format expects list of polygons
+                "segmentation": segmentation,  # COCO format: list of polygons (outer + holes)
                 "area": area,
                 "bbox": bbox,  # [x, y, width, height]
                 "iscrowd": 0
