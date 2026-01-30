@@ -97,7 +97,7 @@ pip install -e ".[train,dev]"
 
 5. **Download:**
 ```bash
-hf download facebook/sam3 assets/bpe_simple_vocab_16e6.txt.gz --local-dir /PATH/cc_segmentation_sam3/sam3/checkpoints/
+https://github.com/facebookresearch/sam3/tree/main/sam3/assets
 ```
 
 ## Getting Started
