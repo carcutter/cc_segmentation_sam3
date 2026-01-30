@@ -95,6 +95,11 @@ pip install -e ".[notebooks]"
 pip install -e ".[train,dev]"
 ```
 
+5. **Download:**
+```bash
+hf download facebook/sam3 assets/bpe_simple_vocab_16e6.txt.gz --local-dir /PATH/cc_segmentation_sam3/sam3/checkpoints/
+```
+
 ## Getting Started
 
 ⚠️ Before using SAM 3, please request access to the checkpoints on the SAM 3
