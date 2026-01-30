@@ -53,6 +53,36 @@ def extract_binary_mask_by_ids(colored_mask, category_ids, tolerance=10):
     return binary_mask
 
 
+def extract_binary_mask_all_except_background(colored_mask, background_color=(0, 0, 0), tolerance=10):
+    """
+    Extract binary mask by merging ALL colors except background.
+    
+    Args:
+        colored_mask: BGR image with colored segmentation (each color = category)
+        background_color: RGB tuple for background color to exclude (default black: (0, 0, 0))
+        tolerance: Color matching tolerance (default 10)
+    
+    Returns:
+        Binary mask where all non-background pixels are white (255)
+    """
+    # Convert BGR to RGB for easier color specification
+    colored_mask_rgb = cv2.cvtColor(colored_mask, cv2.COLOR_BGR2RGB)
+    
+    # Check if pixel values are within tolerance of background color
+    r, g, b = background_color
+    r_match = np.abs(colored_mask_rgb[:, :, 0].astype(int) - r) <= tolerance
+    g_match = np.abs(colored_mask_rgb[:, :, 1].astype(int) - g) <= tolerance
+    b_match = np.abs(colored_mask_rgb[:, :, 2].astype(int) - b) <= tolerance
+    
+    # Pixels matching background
+    is_background = (r_match & g_match & b_match)
+    
+    # Binary mask is everything that is NOT background
+    binary_mask = (~is_background).astype(np.uint8) * 255
+    
+    return binary_mask
+
+
 def extract_contour_mask(mask, erosion_kernel_size=5, erosion_iterations=2):
     """
     Extract contours from a binary mask by erosion only (inner boundary).
@@ -78,8 +108,9 @@ def extract_contour_mask(mask, erosion_kernel_size=5, erosion_iterations=2):
     return contour_mask
 
 
-def process_colored_masks(input_dir, output_dir, category_ids, generate_contours=False,
-                          erosion_kernel_size=5, erosion_iterations=2):
+def process_colored_masks(input_dir, output_dir, category_ids=None, generate_contours=False,
+                          erosion_kernel_size=5, erosion_iterations=2,
+                          join_all_except_background=False, background_color=(0, 0, 0)):
     """
     Process all colored masks and extract binary masks for specified categories.
     
@@ -88,9 +119,12 @@ def process_colored_masks(input_dir, output_dir, category_ids, generate_contours
         output_dir: Directory to save binary masks
         category_ids: List of RGB tuples representing categories to extract
                      e.g., [(0, 255, 0)] for green only, [(255, 0, 0), (0, 255, 0)] for red+green
+                     Ignored if join_all_except_background is True
         generate_contours: If True, also generate contour masks
         erosion_kernel_size: Kernel size for contour extraction
         erosion_iterations: Iterations for contour extraction
+        join_all_except_background: If True, merge ALL colors except background into binary mask
+        background_color: RGB tuple for background color (default black: (0, 0, 0))
     """
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -119,7 +153,10 @@ def process_colored_masks(input_dir, output_dir, category_ids, generate_contours
     print(f"Found {len(mask_files)} mask files")
     print(f"Processing masks from: {input_dir}")
     print(f"Saving binary masks to: {output_dir}")
-    print(f"Categories to extract (RGB): {category_ids}")
+    if join_all_except_background:
+        print(f"Mode: Join ALL colors except background {background_color}")
+    else:
+        print(f"Categories to extract (RGB): {category_ids}")
     if generate_contours:
         print(f"Contour params: erosion_kernel={erosion_kernel_size}, erosion_iters={erosion_iterations}")
     
@@ -139,8 +176,11 @@ def process_colored_masks(input_dir, output_dir, category_ids, generate_contours
             print(f"Warning: Could not read {mask_file}, skipping...")
             continue
         
-        # Extract binary mask for specified categories
-        binary_mask = extract_binary_mask_by_ids(colored_mask, category_ids)
+        # Extract binary mask based on mode
+        if join_all_except_background:
+            binary_mask = extract_binary_mask_all_except_background(colored_mask, background_color)
+        else:
+            binary_mask = extract_binary_mask_by_ids(colored_mask, category_ids)
         
         # Update statistics
         if np.max(binary_mask) > 0:
@@ -198,6 +238,8 @@ def main():
         - [(255, 0, 0)] -> Extract only red pixels (cars)
         - [(255, 0, 0), (0, 255, 0)] -> Extract both red and green (cars + mirrors)
         - [(0, 0, 0)] -> Extract black pixels (background)
+    - join_all_except_background: Set to True to merge ALL colors except background
+    - background_color: RGB tuple for background color (default black)
     - generate_contours: Set to True to also generate contour masks
     - erosion_kernel_size: Kernel size for contour extraction (default: 5)
     - erosion_iterations: Number of erosion iterations for contour (default: 2)
@@ -212,20 +254,16 @@ def main():
         input_dir = f"{folder_path}/masks"
         output_dir = f"{folder_path}/preprocessed_mask/{task_name}/mask"
         
+        # Option 1: Join ALL colors except background (simpler approach)
+        join_all_except_background = True  # Set to True to merge all non-background colors
+        background_color = (0, 0, 0)  # RGB color to treat as background (black)
+        
+        # Option 2: Specify individual category IDs (only used if join_all_except_background=False)
         # Category IDs to extract (RGB format)
         # Example: Extract green (mirror) pixels only
         # category_ids =  [(0, 255, 0)]  # Green color in RGB
-        #category_ids = [(  0,   0, 255)] #-> Blue
-        category_ids = [ 
-            (255,   0,   0), #-> Red (Car/Vehicle)
-            (0,   255,   0),  #-> Green (Mirror)
-            (128, 128, 128),  # -> Gray
-            (200,   0, 255),  # -> Purple/Magenta
-            (255,   0,   0),  # -> Red (Car/Vehicle)
-            (255, 165,   0),  # -> Orange
-            (  0,   0, 255) #-> Blue
-        ]
-
+        #category_ids = [(  0,   0, 255)] #-> Blue -> FOR HOLES 
+        category_ids = []  # Red color in RGB
         # To extract multiple categories (merge them into one binary mask):
         # category_ids = [(255, 0, 0), (0, 255, 0)]  # Red + Green
         
@@ -243,7 +281,9 @@ def main():
             category_ids=category_ids,
             generate_contours=generate_contours,
             erosion_kernel_size=erosion_kernel_size,
-            erosion_iterations=erosion_iterations
+            erosion_iterations=erosion_iterations,
+            join_all_except_background=join_all_except_background,
+            background_color=background_color
         )
 
 
