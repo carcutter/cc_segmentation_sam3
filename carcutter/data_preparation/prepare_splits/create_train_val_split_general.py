@@ -26,7 +26,7 @@ import cv2
 TASK_NAME = "outline"  # Change to: "outline", "holes", "mirrors", etc.
 
 # Batch configuration
-ROOT_FOLDER = "/home/raul/workspace/data"
+ROOT_FOLDER = "/home/rutger/work/cc_segmentation_sam3/data"
 BATCH_NAME_LIST = [
     "car_segmentation/kw2551_car_segmentation",
     #"car_segmentation/kw2552_car_interior_segmentation",
@@ -42,7 +42,7 @@ BATCH_NAME_LIST = [
 MASK_PATH_PATTERN = "preprocessed_mask/{task}/mask"
 
 # Output configuration
-OUTPUT_BASE_DIR = "/home/raul/workspace/data/training"
+OUTPUT_BASE_DIR = "/home/rutger/work/cc_segmentation_sam3/data/training"
 
 # Split configuration
 VAL_RATIO = 0.15  # 15% validation
@@ -50,7 +50,7 @@ RANDOM_SEED = 42
 
 # CLIP classification integration (optional)
 USE_CLIP_CLASSIFICATION = True  # Set to True to stratify by vehicle type
-CLIP_CLASSIFICATION_JSON = "/home/raul/workspace/data/car_segmentation/classification_results/classification_results.json"
+CLIP_CLASSIFICATION_JSON = "/home/rutger/work/cc_segmentation_sam3/data/car_segmentation/classification_results/classification_results.json"
 
 # Minimum area for counting regions (in pixels)
 MIN_REGION_AREA = 100

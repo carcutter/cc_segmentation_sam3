@@ -4,7 +4,7 @@ Verify that the generated COCO annotations are valid for SAM3 training.
 This script checks:
 1. JSON structure (images, annotations, categories)
 2. Required fields in each annotation
-3. Polygon format validity
+3. Segmentation format validity (RLE or polygons)
 4. Image-annotation consistency
 """
 
@@ -13,8 +13,11 @@ import argparse
 from pathlib import Path
 from collections import defaultdict
 
+import numpy as np
+from pycocotools import mask as mask_utils
 
-def verify_coco_annotations(ann_file: Path):
+
+def verify_coco_annotations(ann_file: Path, check_rle_roundtrip: bool = False):
     """Verify COCO annotation file structure and content."""
     print(f"\nVerifying: {ann_file}")
     print("=" * 60)
@@ -90,6 +93,18 @@ def verify_coco_annotations(ann_file: Path):
                 invalid_anns.append(f"Annotation {ann['id']}: invalid polygon format")
         elif isinstance(seg, dict) and 'counts' in seg:
             # RLE format
+            if 'size' not in seg or not isinstance(seg['size'], list) or len(seg['size']) != 2:
+                invalid_anns.append(f"Annotation {ann['id']}: invalid RLE size")
+                continue
+            if check_rle_roundtrip:
+                decoded = mask_utils.decode(seg).astype(np.uint8)
+                re_encoded = mask_utils.encode(np.asfortranarray(decoded))
+                re_decoded = mask_utils.decode(re_encoded).astype(np.uint8)
+                if not np.array_equal(decoded, re_decoded):
+                    invalid_anns.append(
+                        f"Annotation {ann['id']}: RLE roundtrip mismatch"
+                    )
+                    continue
             segmentation_formats['RLE'] += 1
         else:
             invalid_anns.append(f"Annotation {ann['id']}: invalid segmentation format")
@@ -145,6 +160,11 @@ def main():
         default=['train', 'val'],
         help="Splits to verify (e.g., train val)"
     )
+    parser.add_argument(
+        "--check-rle-roundtrip",
+        action="store_true",
+        help="Decode/encode RLE to verify roundtrip stability"
+    )
     
     args = parser.parse_args()
     dataset_dir = Path(args.dataset_dir)
@@ -165,7 +185,7 @@ def main():
             print(f"\n⚠️  Skipping {split}: {ann_file} not found")
             continue
         
-        if not verify_coco_annotations(ann_file):
+        if not verify_coco_annotations(ann_file, check_rle_roundtrip=args.check_rle_roundtrip):
             all_valid = False
     
     print("\n" + "=" * 60)

@@ -10,7 +10,7 @@ This script works with existing train/val splits:
 The script:
 1. Reads images and their corresponding binary masks from existing splits
 2. Extracts individual object instances from each mask
-3. Generates polygon annotations for each instance
+3. Generates RLE annotations for each instance (holes preserved)
 4. Creates COCO-format JSON annotations
 5. Optionally copies/organizes data in the expected structure for SAM3 training
 """
@@ -26,6 +26,7 @@ from PIL import Image
 from tqdm import tqdm
 import argparse
 import shutil
+from pycocotools import mask as mask_utils
 
 
 def find_matching_mask(image_path: Path, mask_dir: Path) -> Path:
@@ -132,6 +133,74 @@ def extract_polygons_from_mask(mask: np.ndarray, min_area: int = 100, min_hole_a
     return segmentations
 
 
+def extract_instance_masks_from_mask(
+    mask: np.ndarray, min_area: int = 100, min_hole_area: int = 50
+) -> List[np.ndarray]:
+    """
+    Extract per-instance binary masks from a binary mask, preserving holes.
+
+    Args:
+        mask: Binary mask where white (255) represents the object
+        min_area: Minimum area threshold to filter out small outer contours
+        min_hole_area: Minimum area threshold for holes
+
+    Returns:
+        List of binary instance masks (uint8 with values 0/1)
+    """
+    # Ensure mask is binary
+    if len(mask.shape) == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+    # Threshold to ensure binary
+    _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+
+    contours, hierarchy = cv2.findContours(
+        binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if hierarchy is None or len(contours) == 0:
+        return []
+
+    hierarchy = hierarchy[0]
+    h, w = binary_mask.shape[:2]
+    instance_masks = []
+
+    for i, contour in enumerate(contours):
+        if hierarchy[i][3] != -1:
+            continue
+
+        area = cv2.contourArea(contour)
+        if area < min_area:
+            continue
+
+        instance_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(instance_mask, [contour], -1, 1, thickness=cv2.FILLED)
+
+        child_idx = hierarchy[i][2]
+        while child_idx != -1:
+            hole_contour = contours[child_idx]
+            hole_area = cv2.contourArea(hole_contour)
+
+            if hole_area >= min_hole_area:
+                cv2.drawContours(
+                    instance_mask, [hole_contour], -1, 0, thickness=cv2.FILLED
+                )
+
+            child_idx = hierarchy[child_idx][0]
+
+        instance_masks.append(instance_mask)
+
+    return instance_masks
+
+
+def encode_binary_mask_to_rle(mask: np.ndarray) -> Dict:
+    """Encode a binary mask to COCO RLE format."""
+    rle = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
+    if isinstance(rle.get("counts"), bytes):
+        rle["counts"] = rle["counts"].decode("ascii")
+    return rle
+
+
 def calculate_bbox_from_polygon(polygon: List[float]) -> List[float]:
     """Calculate bounding box [x, y, width, height] from polygon."""
     xs = polygon[0::2]
@@ -166,6 +235,8 @@ def process_dataset(
     output_dir: Path,
     category_names: List[str] = None,
     min_area: int = 100,
+    min_hole_area: int = 50,
+    verify_rle_roundtrip: bool = False,
     copy_images: bool = False
 ) -> Dict:
     """
@@ -179,6 +250,8 @@ def process_dataset(
         output_dir: Directory to save processed dataset
         category_names: List of category names (different text prompts for the same object)
         min_area: Minimum area threshold for filtering noise
+        min_hole_area: Minimum area threshold for holes
+        verify_rle_roundtrip: If True, verify mask -> RLE -> mask roundtrip with no thresholds
         copy_images: Whether to copy images to output directory (default: False, uses symlinks or relative paths)
         
     Returns:
@@ -271,7 +344,11 @@ def process_dataset(
             mask_path = find_matching_mask(image_path, train_labels_dir)
             result = process_single_image(
                 image_path, mask_path, img_id, annotation_id,
-                output_train_dir, min_area, category_ids=list(range(1, len(category_names) + 1)),
+                output_train_dir,
+                min_area,
+                min_hole_area,
+                category_ids=list(range(1, len(category_names) + 1)),
+                verify_rle_roundtrip=verify_rle_roundtrip,
                 copy_image=copy_images
             )
             
@@ -295,7 +372,11 @@ def process_dataset(
             mask_path = find_matching_mask(image_path, val_labels_dir)
             result = process_single_image(
                 image_path, mask_path, img_id, annotation_id,
-                output_val_dir, min_area, category_ids=list(range(1, len(category_names) + 1)),
+                output_val_dir,
+                min_area,
+                min_hole_area,
+                category_ids=list(range(1, len(category_names) + 1)),
+                verify_rle_roundtrip=verify_rle_roundtrip,
                 copy_image=copy_images
             )
             
@@ -336,7 +417,9 @@ def process_single_image(
     annotation_id: int,
     output_images_dir: Path,
     min_area: int,
+    min_hole_area: int,
     category_ids: List[int],
+    verify_rle_roundtrip: bool = False,
     copy_image: bool = False
 ) -> Optional[Dict]:
     """Process a single image-mask pair."""
@@ -356,10 +439,10 @@ def process_single_image(
     # Read mask
     mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
     
-    # Extract segmentations for each instance (each segmentation includes outer polygon + holes)
-    segmentations = extract_polygons_from_mask(mask, min_area)
+    # Extract per-instance masks (preserving holes)
+    instance_masks = extract_instance_masks_from_mask(mask, min_area, min_hole_area)
     
-    if not segmentations:
+    if not instance_masks:
         return None
     
     # Create image info
@@ -370,19 +453,24 @@ def process_single_image(
         "width": width
     }
     
-    # Create annotations for each segmentation (each object instance)
-    # Each segmentation is a list of polygons: [outer_polygon, hole1, hole2, ...]
+    # Create annotations for each instance mask
     # For each instance, create one annotation per category (enables multi-prompt training)
     annotations = []
-    for segmentation in segmentations:
-        # The first polygon is the outer boundary, use it for bbox and area calculation
-        outer_polygon = segmentation[0]
-        bbox = calculate_bbox_from_polygon(outer_polygon)
-        
-        # Calculate area: outer area minus hole areas
-        outer_area = calculate_area_from_polygon(outer_polygon)
-        hole_areas = sum(calculate_area_from_polygon(hole) for hole in segmentation[1:])
-        area = outer_area - hole_areas
+    for instance_mask in instance_masks:
+        rle = encode_binary_mask_to_rle(instance_mask)
+        if verify_rle_roundtrip:
+            if min_area != 0 or min_hole_area != 0:
+                raise ValueError(
+                    "RLE roundtrip verification requires min_area=0 and min_hole_area=0"
+                )
+            decoded = mask_utils.decode(rle)
+            if not np.array_equal(decoded.astype(np.uint8), instance_mask.astype(np.uint8)):
+                raise ValueError(
+                    f"RLE roundtrip mismatch for image: {image_path.name}"
+                )
+        area = float(mask_utils.area(rle))
+        bbox = mask_utils.toBbox(rle).tolist()
+        bbox = [float(v) for v in bbox]
         
         # Create one annotation for each category ID (all refer to same object)
         for category_id in category_ids:
@@ -390,7 +478,7 @@ def process_single_image(
                 "id": annotation_id,
                 "image_id": image_id,
                 "category_id": category_id,
-                "segmentation": segmentation,  # COCO format: list of polygons (outer + holes)
+                "segmentation": rle,  # COCO format: RLE (preserves holes)
                 "area": area,
                 "bbox": bbox,  # [x, y, width, height]
                 "iscrowd": 0
@@ -472,9 +560,20 @@ def main():
         help="Minimum area threshold to filter small noise"
     )
     parser.add_argument(
+        "--min-hole-area",
+        type=int,
+        default=50,
+        help="Minimum area threshold for holes (set to 0 to keep all holes)"
+    )
+    parser.add_argument(
         "--copy-images",
         action="store_true",
         help="Copy images to output directory (default: keep original locations)"
+    )
+    parser.add_argument(
+        "--verify-rle-roundtrip",
+        action="store_true",
+        help="Verify mask -> RLE -> mask roundtrip (requires min-area=0 and min-hole-area=0)"
     )
     
     args = parser.parse_args()
@@ -557,6 +656,8 @@ def main():
     print(f"Output directory: {output_dir}")
     print(f"Category names (prompts): {', '.join(category_names)}")
     print(f"Min area: {args.min_area}")
+    print(f"Min hole area: {args.min_hole_area}")
+    print(f"Verify RLE roundtrip: {args.verify_rle_roundtrip}")
     print(f"Copy images: {args.copy_images}")
     print("=" * 60)
     
@@ -569,6 +670,8 @@ def main():
         output_dir=output_dir,
         category_names=category_names,
         min_area=args.min_area,
+        min_hole_area=args.min_hole_area,
+        verify_rle_roundtrip=args.verify_rle_roundtrip,
         copy_images=args.copy_images
     )
     

@@ -1,6 +1,6 @@
 # SAM3 Dataset Preparation
 
-This toolkit prepares your segmentation dataset for SAM3 finetuning by converting binary masks to COCO format with proper polygon annotations.
+This toolkit prepares your segmentation dataset for SAM3 finetuning by converting binary masks to COCO format with RLE annotations that preserve holes.
 
 ## Quick Start
 
@@ -150,7 +150,9 @@ python prepare_sam3_dataset.py --copy-images
 - `--output-dir`: Where to save the COCO annotations
 - `--category-names`: List of category names (text prompts) for multi-prompt training
 - `--min-area`: Minimum area in pixels to filter noise (default: 100)
+- `--min-hole-area`: Minimum area in pixels for holes (default: 50)
 - `--copy-images`: Copy images to output directory instead of keeping them in place
+- `--verify-rle-roundtrip`: Verify mask → RLE → mask roundtrip (requires `--min-area 0 --min-hole-area 0`)
 
 ### 2. Visualize Annotations (Optional but Recommended)
 
@@ -202,27 +204,15 @@ The script reads from your existing training and validation splits, preserving y
 ### Automatic Instance Detection
 The script automatically detects multiple object instances in each image and creates separate annotations for each.
 
-### Polygon Annotations
-Binary masks are converted to polygon contours, which SAM3 uses for training. The polygons are simplified to reduce memory usage while maintaining accuracy.
+### RLE Annotations
+Binary masks are converted to COCO RLE, which SAM3 uses for training. RLE preserves holes and avoids polygon winding issues.
 
 ### Hole Support
-The script properly handles segmentations with holes (e.g., car outlines with ski-box attachments where background shows through). Holes are detected automatically using contour hierarchy and included in the COCO annotation format:
-
-```json
-"segmentation": [
-  [x1, y1, x2, y2, ...],  // Outer boundary polygon
-  [x1, y1, x2, y2, ...]   // Hole polygon (if present)
-]
-```
-
-- Outer contours and their child (hole) contours are grouped together
-- Area calculation accounts for holes (outer area minus hole areas)
-- Holes smaller than `min_hole_area` (default: 50 pixels) are filtered out
+Holes are preserved because masks are encoded as RLE. The instance extraction removes holes from each instance mask before encoding.
 
 ### Quality Filtering
 - Minimum area threshold filters out noise and small artifacts
-- Contour approximation reduces polygon complexity
-- Invalid polygons (< 3 points) are automatically skipped
+- Holes smaller than `min-hole-area` are removed before encoding
 
 ### Flexible Image Handling
 - **Default**: Images stay at original locations (saves disk space)
@@ -252,10 +242,10 @@ The generated annotations follow the standard COCO format:
       "id": 1,
       "image_id": 1,
       "category_id": 1,
-      "segmentation": [
-        [x1, y1, x2, y2, ...],  // Outer polygon
-        [x1, y1, x2, y2, ...]   // Hole polygon (optional, if holes exist)
-      ],
+      "segmentation": {
+        "counts": "...",
+        "size": [height, width]
+      },
       "area": 12345.67,  // Outer area minus hole areas
       "bbox": [x, y, width, height],
       "iscrowd": 0
@@ -292,10 +282,9 @@ The generated annotations follow the standard COCO format:
 - Check that your masks have white (255) regions on black (0) background
 - Verify masks are not inverted
 
-### Polygons look incorrect
-- Check the mask quality - blurry edges cause poor polygon extraction
+### Masks look incorrect
+- Check the mask quality - blurry edges cause poor mask extraction
 - Consider pre-processing masks with morphological operations
-- Adjust the contour approximation epsilon in the code if needed
 
 ### Images not found during visualization
 - If images weren't copied, use `--images-dir` to specify their location
@@ -310,7 +299,7 @@ The generated annotations follow the standard COCO format:
 ## Advanced Usage
 
 ### Custom Filtering
-Modify `extract_polygons_from_mask()` to add custom filtering:
+Modify `extract_instance_masks_from_mask()` to add custom filtering:
 ```python
 # Example: Filter by aspect ratio
 for contour in contours:
@@ -329,14 +318,8 @@ categories = [
 ]
 ```
 
-### RLE Format (for very complex masks)
-For masks with many holes or complex shapes, consider using RLE format instead of polygons. Modify the annotation creation:
-```python
-from pycocotools import mask as mask_utils
-
-rle = mask_utils.encode(np.asfortranarray(binary_mask))
-annotation["segmentation"] = rle
-```
+### RLE Format (default)
+RLE is the default output and preserves holes. Use `--verify-rle-roundtrip` with zero thresholds to ensure roundtrip consistency.
 
 ## Performance Tips
 
@@ -378,7 +361,25 @@ python prepare_sam3_dataset.py \
 ```bash
 python verify_annotations.py \
     --dataset-dir /home/raul/workspace/data/training/mirrors/20260120/sam3_format \
-    --splits train val
+  --splits train val
+
+# Optional: verify RLE decode/encode stability
+python verify_annotations.py \
+  --dataset-dir /home/raul/workspace/data/training/mirrors/20260120/sam3_format \
+  --splits train val \
+  --check-rle-roundtrip
+```
+
+### Roundtrip Test (Mask → RLE → Mask)
+To explicitly test reversibility with no size thresholds:
+
+```bash
+python prepare_sam3_dataset.py \
+  --data-root /path/to/data/training/<task_name>/<date> \
+  --task-name <task_name> \
+  --min-area 0 \
+  --min-hole-area 0 \
+  --verify-rle-roundtrip
 ```
 
 ### Step 3: Visualize Samples
