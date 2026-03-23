@@ -37,9 +37,10 @@ which python  # after: conda activate cc_sam3
 
 Before taking any action, confirm:
 1. Which task? (`holes`, `outline`, `mirror`, or `trailer`)
-2. Is COCO data already prepared, or does data prep need to run?
-3. How many GPUs and approximate VRAM per GPU?
-4. Does a training config already exist, or does one need updating?
+2. Interior or exterior images? (interior = skip foreground crop step)
+3. Is COCO data already prepared, or does data prep need to run?
+4. How many GPUs and approximate VRAM per GPU?
+5. Does a training config already exist, or does one need updating?
 
 ---
 
@@ -57,7 +58,12 @@ python carcutter/data_preparation/extract_binary_mask.py \
   --mode all_except_background
 ```
 
-### Step 1 — Foreground crop (skip if not cropping to object bbox)
+### Step 1 — Foreground crop
+
+> **SKIP for interior images** (car interior, boat interior). Interior shots fill
+> the full frame — there is no foreground bbox to crop to. Go directly to Step 2
+> using `raw_images/` and `binary_masks/` as inputs.
+
 ```bash
 python carcutter/data_preparation/crop_to_outline_bbox.py \
   --raw-dir data/car_segmentation/<batch>/raw_images \
@@ -109,6 +115,28 @@ CRITICAL: Always update these fields before training:
 - `paths.dataset_root` — path to the dated data folder (e.g. `data/training/holes/260201`)
 - `paths.experiment_log_dir` — where checkpoints and logs go
 - `data.train.batch_size` — reduce if OOM (default: 12)
+
+### Creating a config for a new task
+
+Copy the trailer config as a starting point and replace all occurrences of `trailer` with the new task name. Two non-obvious requirements:
+
+1. The config **must** start with `# @package _global_` followed by `defaults: [_self_]` — without this, Hydra nests the content under the directory path instead of placing it at root level.
+2. After adding a new config directory, reinstall the package so Hydra discovers the namespace:
+   ```bash
+   pip install -e . --no-deps
+   ```
+3. Pass the config path relative to `sam3/train/` (not the repo root):
+   ```bash
+   python sam3/train/train.py -c configs/{task}/freeze/{task}_finetune_with_freezing.yaml ...
+   ```
+
+For dryruns with a small dataset, also scale down the scheduler to avoid division-by-zero:
+```yaml
+scheduler_timescale: 5
+scheduler_warmup: 2
+scheduler_cooldown: 2
+```
+And lower `detection_threshold: 0.01` if the model has no prior fine-tuning (otherwise COCO eval crashes on empty predictions).
 
 Choose freeze strategy based on available VRAM:
 

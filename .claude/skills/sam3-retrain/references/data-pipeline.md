@@ -112,6 +112,10 @@ Location: `carcutter/data_preparation/`
 
 Crops raw images and masks to the bounding box of the foreground object (5% padding default).
 
+> **Skip for interior images** (car interior, boat interior). The camera is inside
+> the vehicle so the subject fills the entire frame — cropping to a bbox is meaningless
+> and would discard the image edges where mirrors often appear.
+
 ```bash
 python carcutter/data_preparation/crop_to_outline_bbox.py \
   --raw-dir <raw_images_dir> \
