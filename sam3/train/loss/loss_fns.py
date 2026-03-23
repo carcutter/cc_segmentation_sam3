@@ -78,7 +78,14 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def dice_loss(inputs, targets, num_boxes, loss_on_multimask=False, reduce=True):
+def dice_loss(
+    inputs,
+    targets,
+    num_boxes,
+    loss_on_multimask=False,
+    reduce=True,
+    valid_mask=None,
+):
     """
     Compute the DICE loss, similar to generalized IOU for masks
     Args:
@@ -89,7 +96,9 @@ def dice_loss(inputs, targets, num_boxes, loss_on_multimask=False, reduce=True):
                 (0 for the negative class and 1 for the positive class).
     """
     try:
-        loss = _dice_loss(inputs, targets, num_boxes, loss_on_multimask, reduce)
+        loss = _dice_loss(
+            inputs, targets, num_boxes, loss_on_multimask, reduce, valid_mask
+        )
     except torch.OutOfMemoryError:
         logging.error("GPU OOM, computing dice loss on CPU")
         # try to recover from GPU OOM by moving tensors to CPU and computing loss there
@@ -104,8 +113,13 @@ def dice_loss(inputs, targets, num_boxes, loss_on_multimask=False, reduce=True):
     return loss
 
 
-def _dice_loss(inputs, targets, num_boxes, loss_on_multimask=False, reduce=True):
+def _dice_loss(
+    inputs, targets, num_boxes, loss_on_multimask=False, reduce=True, valid_mask=None
+):
     inputs = inputs.sigmoid()
+    if valid_mask is not None:
+        inputs = inputs * valid_mask
+        targets = targets * valid_mask
     if loss_on_multimask:
         # inputs and targets are [N, M, H, W] where M corresponds to multiple predicted masks
         assert inputs.dim() == 4 and targets.dim() == 4
@@ -1025,6 +1039,7 @@ class SemanticSegCriterion(LossWithWeights):
     def get_loss(self, out_dict, targets):
         outputs = out_dict["semantic_seg"]
         presence_logit = out_dict["presence_logit"]
+        semantic_ignore_mask = targets.get("semantic_ignore_masks", None)
         if (
             "semantic_masks" in targets
             and targets["semantic_masks"] is not None
@@ -1068,6 +1083,24 @@ class SemanticSegCriterion(LossWithWeights):
                     segments, targets["num_boxes"]
                 )
 
+        if semantic_ignore_mask is not None and semantic_ignore_mask.numel() > 0:
+            if self.downsample:
+                size = outputs.shape[-2:]
+            else:
+                size = semantic_targets.shape[-2:]
+            if tuple(semantic_ignore_mask.shape[-2:]) != tuple(size):
+                semantic_ignore_mask = (
+                    F.interpolate(
+                        semantic_ignore_mask.float().unsqueeze(1),
+                        size=size,
+                        mode="nearest",
+                    )
+                    .squeeze(1)
+                    .bool()
+                )
+            else:
+                semantic_ignore_mask = semantic_ignore_mask.bool()
+
         if not self.downsample:
             # upsample predictions to the target size
             size = semantic_targets.shape[-2:]
@@ -1078,39 +1111,72 @@ class SemanticSegCriterion(LossWithWeights):
                 align_corners=False,
             )
 
+        valid_mask = None
+        if semantic_ignore_mask is not None and semantic_ignore_mask.numel() > 0:
+            valid_mask = ~semantic_ignore_mask
+
         if self.focal:
-            loss = sigmoid_focal_loss(
-                outputs.squeeze(1).flatten(-2),
-                semantic_targets.float().flatten(-2),
+            loss_raw = sigmoid_focal_loss(
+                outputs.squeeze(1),
+                semantic_targets.float(),
                 num_boxes=len(semantic_targets),
                 alpha=self.focal_alpha,
                 gamma=self.focal_gamma,
-                reduce=not self.presence_head,
+                reduce=False,
             )
-            if self.presence_head:
-                loss = loss.mean(1)
+            if valid_mask is not None:
+                valid_mask_f = valid_mask.float()
+                loss = (
+                    loss_raw * valid_mask_f
+                ).flatten(1).sum(1) / (
+                    valid_mask_f.flatten(1).sum(1) + 1e-6
+                )
+            else:
+                loss = loss_raw.flatten(1).mean(1)
+            if not self.presence_head:
+                loss = loss.sum() / len(semantic_targets)
         else:
-            loss = F.binary_cross_entropy_with_logits(
+            loss_raw = F.binary_cross_entropy_with_logits(
                 outputs.squeeze(1),
                 semantic_targets.float(),
-                reduction="none" if self.presence_head else "mean",
+                reduction="none",
             )
-            if self.presence_head:
-                loss = loss.flatten(1).mean(1)
+            if valid_mask is not None:
+                valid_mask_f = valid_mask.float()
+                loss = (
+                    loss_raw * valid_mask_f
+                ).flatten(1).sum(1) / (
+                    valid_mask_f.flatten(1).sum(1) + 1e-6
+                )
+            else:
+                loss = loss_raw.flatten(1).mean(1)
+            if not self.presence_head:
+                loss = loss.sum() / len(semantic_targets)
 
         loss_dice = dice_loss(
             outputs.squeeze(1).flatten(1),
             semantic_targets.flatten(1),
             len(semantic_targets),
             reduce=not self.presence_head,
+            valid_mask=(valid_mask.flatten(1) if valid_mask is not None else None),
         )
 
-        miou = segment_miou(outputs.sigmoid().squeeze(1) > 0.5, semantic_targets)
+        if valid_mask is not None:
+            pred_mask = (outputs.sigmoid().squeeze(1) > 0.5) & valid_mask
+            target_mask = semantic_targets & valid_mask
+        else:
+            pred_mask = outputs.sigmoid().squeeze(1) > 0.5
+            target_mask = semantic_targets
+
+        miou = segment_miou(pred_mask, target_mask)
 
         loss_dict = {}
 
         if self.presence_head:
-            presence_target = semantic_targets.flatten(1).any(-1)
+            if valid_mask is not None:
+                presence_target = (semantic_targets & valid_mask).flatten(1).any(-1)
+            else:
+                presence_target = semantic_targets.flatten(1).any(-1)
             if self.presence_loss:
                 loss_presence = F.binary_cross_entropy_with_logits(
                     presence_logit.flatten(),

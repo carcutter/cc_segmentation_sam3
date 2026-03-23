@@ -490,7 +490,9 @@ class Sam3Image(torch.nn.Module):
                 hs=hs,
             )
 
-        if self.training or self.num_interactive_steps_val > 0:
+        # Always compute matching during training AND validation (needed for loss computation)
+        # Matcher is only None during pure inference
+        if self.training or self.matcher is not None:
             self._compute_matching(out, self.back_convert(find_target))
         return out
 
@@ -591,6 +593,7 @@ class Sam3Image(torch.nn.Module):
             "num_boxes": targets.num_boxes,
             "masks": targets.segments,
             "semantic_masks": targets.semantic_segments,
+            "semantic_ignore_masks": targets.semantic_ignore_masks,
             "is_valid_mask": targets.is_valid_segment,
             "is_exhaustive": targets.is_exhaustive,
             "object_ids_packed": targets.object_ids,

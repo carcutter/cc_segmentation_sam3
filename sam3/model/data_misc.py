@@ -109,6 +109,10 @@ class BatchedFindTarget:
     semantic_segments: Optional[MyTensor]
     semantic_segments__type = torch.bool
 
+    # Optional per-pixel ignore masks for semantic supervision
+    semantic_ignore_masks: Optional[MyTensor]
+    semantic_ignore_masks__type = torch.bool
+
     is_valid_segment: Optional[MyTensor]
     is_valid_segment__type = torch.bool
 

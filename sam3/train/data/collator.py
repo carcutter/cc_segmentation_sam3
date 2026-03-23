@@ -173,6 +173,7 @@ def collate_fn_api(
             is_exhaustive=[],
             segments=[],
             semantic_segments=[],
+            semantic_ignore_masks=[],
             is_valid_segment=[],
             repeated_boxes=[],
             object_ids=[],
@@ -301,6 +302,14 @@ def collate_fn_api(
 
             if q.semantic_target is not None:
                 find_targets[stage_id].semantic_segments.append(q.semantic_target)
+                if q.semantic_ignore_mask is not None:
+                    find_targets[stage_id].semantic_ignore_masks.append(
+                        q.semantic_ignore_mask.to(torch.bool)
+                    )
+                else:
+                    find_targets[stage_id].semantic_ignore_masks.append(
+                        torch.zeros_like(q.semantic_target, dtype=torch.bool)
+                    )
 
         offset_img_id += len(data.images)
 

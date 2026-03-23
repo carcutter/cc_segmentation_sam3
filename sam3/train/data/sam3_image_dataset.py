@@ -84,6 +84,9 @@ class FindQuery:
 
     semantic_target: Optional[torch.Tensor] = None
 
+    # Optional per-pixel ignore mask for semantic supervision (True = ignore)
+    semantic_ignore_mask: Optional[Union[torch.Tensor, dict]] = None
+
     # pixel exhaustivity: true iff the union of all segments (including crowds)
     # covers every pixel belonging to the target class
     # Note that instance_exhaustive implies pixel_exhaustive
@@ -414,6 +417,7 @@ class CustomCocoDetectionAPI(VisionDataset):
                             query["is_exhaustive"] if query["is_exhaustive"] else None
                         )
                     ),
+                    semantic_ignore_mask=query.get("semantic_ignore_mask", None),
                     query_processing_order=query["query_processing_order"],
                     inference_metadata=InferenceMetadata(
                         coco_image_id=-1 if self.training else coco_image_id,
