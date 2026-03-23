@@ -178,6 +178,38 @@ Post-training: open `evaluate_{task}.ipynb` in Jupyter for per-sample analysis.
 
 ---
 
+## Inference: Run model on images
+
+`carcutter/inference/run_inference.py` runs SAM3 on a folder of images with a text prompt
+and writes one binary PNG mask per image (all predicted instances OR-ed together).
+
+```bash
+# Base model (downloads from HuggingFace on first run):
+python carcutter/inference/run_inference.py \
+  --input-dir /path/to/images \
+  --output-dir /path/to/pred_masks \
+  --prompt "mirror"
+
+# Fine-tuned checkpoint:
+python carcutter/inference/run_inference.py \
+  --input-dir /path/to/images \
+  --output-dir /path/to/pred_masks \
+  --prompt "mirror" \
+  --checkpoint /path/to/experiments/checkpoints/checkpoint_epoch_0010.pt
+
+# Lower threshold for more (less confident) detections:
+python carcutter/inference/run_inference.py \
+  --input-dir /path/to/images \
+  --output-dir /path/to/pred_masks \
+  --prompt "car" \
+  --threshold 0.3
+```
+
+Output masks are saved at the original image resolution.
+For comparison with ground-truth labels, use a separate script on the output folder.
+
+---
+
 ## Common Issues
 
 **`ModuleNotFoundError: No module named 'torch'` when using `conda run`**
