@@ -341,7 +341,13 @@ def main():
     parser.add_argument(
         "--mode", required=True, choices=["all_except_background", "by_color_ids"],
         help="Extraction mode: 'all_except_background' merges all non-background colors; "
-             "'by_color_ids' extracts specific colors (white by default)"
+             "'by_color_ids' extracts only the colors specified by --color-ids"
+    )
+    parser.add_argument(
+        "--color-ids", default=None,
+        help="Colors to extract in by_color_ids mode, as semicolon-separated RGB triples "
+             "(e.g. '0,0,255' for blue holes; '0,255,0' for green mirrors). "
+             "Required when --mode by_color_ids."
     )
     parser.add_argument(
         "--background-color", default="0,0,0",
@@ -363,8 +369,20 @@ def main():
 
     bg = tuple(int(x) for x in args.background_color.split(","))
     join_all = args.mode == "all_except_background"
-    # Default color IDs for by_color_ids mode: white (common for single-class masks)
-    category_ids = [(255, 255, 255)]
+
+    if not join_all:
+        if args.color_ids is None:
+            parser.error(
+                "--color-ids is required when --mode by_color_ids. "
+                "Example: --color-ids '0,0,255' for blue (holes/see-through), "
+                "'0,255,0' for green (mirrors), '255,255,255' for white (antenna)."
+            )
+        category_ids = [
+            tuple(int(x) for x in c.strip().split(","))
+            for c in args.color_ids.split(";")
+        ]
+    else:
+        category_ids = []
 
     process_colored_masks(
         input_dir=args.input_dir,

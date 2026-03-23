@@ -69,9 +69,17 @@ python carcutter/data_preparation/extract_binary_mask.py \
 # holes — extract only blue see-through regions
 python carcutter/data_preparation/extract_binary_mask.py \
   --input-dir <masks> --output-dir <binary_masks> \
-  --mode by_color_ids --background-color 255,0,0
-  # Note: by_color_ids keeps white (255,255,255) by default;
-  # to target blue, patch category_ids in the script or use check_mask_colors.py first
+  --mode by_color_ids --color-ids '0,0,255'
+
+# mirror — extract only green mirror regions
+python carcutter/data_preparation/extract_binary_mask.py \
+  --input-dir <masks> --output-dir <binary_masks> \
+  --mode by_color_ids --color-ids '0,255,0'
+
+# antenna — extract only white antenna regions
+python carcutter/data_preparation/extract_binary_mask.py \
+  --input-dir <masks> --output-dir <binary_masks> \
+  --mode by_color_ids --color-ids '255,255,255'
 ```
 
 Use `check_mask_colors.py` to verify which colors are actually present in a batch:
@@ -91,10 +99,11 @@ Extracts binary (white/black) masks from colored RGB segmentation masks.
 python carcutter/data_preparation/extract_binary_mask.py \
   --input-dir <colored_masks_dir> \
   --output-dir <binary_masks_dir> \
-  --mode all_except_background   # or by_color_ids
-  [--tolerance 10]               # color matching tolerance
-  [--fill-holes]                 # fill enclosed holes (e.g. chain-link fences)
-  [--generate-contours]          # also produce contour masks
+  --mode all_except_background        # or by_color_ids
+  [--color-ids R,G,B[;R,G,B ...]]     # required for by_color_ids; e.g. '0,0,255' or '0,255,0;255,255,255'
+  [--tolerance 10]                    # color matching tolerance
+  [--fill-holes]                      # fill enclosed holes (e.g. chain-link fences)
+  [--generate-contours]               # also produce contour masks
 ```
 
 ## Script: crop_to_outline_bbox.py
