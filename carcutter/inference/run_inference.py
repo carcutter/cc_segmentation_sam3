@@ -6,7 +6,11 @@ Runs SAM3 on all images in an input folder using a text prompt and saves
 flattened binary segmentation masks to an output folder (one PNG per image).
 
 All predicted instances are OR-ed into a single binary mask per image.
-The output masks are the same resolution as the input images.
+Output masks are the same resolution as the input images.
+
+Images are passed to the model as-is (no task-specific cropping or foreground
+masking). The model itself resizes internally to 1008×1008 for its vision
+backbone and resizes the predicted masks back to the original resolution.
 
 This script is intentionally separate from any ground-truth comparison step —
 the output folder can be passed to a comparison script independently.

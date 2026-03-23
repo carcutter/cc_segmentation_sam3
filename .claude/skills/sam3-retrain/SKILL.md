@@ -205,6 +205,10 @@ python carcutter/inference/run_inference.py \
   --threshold 0.3
 ```
 
+Images are passed to the model as-is — no task-specific cropping or foreground
+masking. The model resizes internally to 1008×1008 and resizes predictions back
+to the original resolution.
+
 Output masks are saved at the original image resolution.
 For comparison with ground-truth labels, use a separate script on the output folder.
 
