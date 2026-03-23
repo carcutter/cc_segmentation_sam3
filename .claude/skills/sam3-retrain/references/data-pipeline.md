@@ -16,6 +16,71 @@ data/training/{task_name}/{date}/
         └── instances_val.json
 ```
 
+## Annotation Color Map
+
+RGB color labels used across all dataset types (car exterior, car interior, trailer, boat):
+
+| RGB | Hex | Label | Notes |
+|-----|-----|-------|-------|
+| `(0, 0, 0)` | `#000000` | Background | Always excluded |
+| `(255, 0, 0)` | `#FF0000` | Car/boat/trailer body | Main foreground object |
+| `(0, 255, 0)` | `#00FF00` | Mirror | Exterior side mirrors |
+| `(0, 0, 255)` | `#0000FF` | See-through region | Transparent/window area showing background |
+| `(255, 255, 255)` | `#FFFFFF` | Antenna | Long antennas + small nubs |
+| `(255, 199, 200)` | `#FFC7C8` | Front left wheel | |
+| `(128, 128, 128)` | `#808080` | Back left wheel | |
+| `(200, 0, 255)` | `#C800FF` | Back right wheel | |
+| `(255, 165, 0)` | `#FFA500` | Front right wheel | |
+
+### Per-scene notes
+
+**Car exterior:** all colors above apply.
+
+**Car interior:** Blue = see-through window, Red = car body, Green = mirror,
+Black = stickers (visible from inside) — stickers should be **merged with blue** for
+training (they are effectively transparent/unwanted regions).
+
+**Boat interior:** same labels as car interior.
+
+**Boat exterior:** same labels as car exterior.
+- Large boats: trailer/support that obscures the boat body is annotated as part
+  of the boat (red).
+- Small boats on stilts: boat body only, support structure not annotated.
+
+**Trailer:** same color scheme as car exterior. Wheel labels (`front-left`, etc.) may be
+inconsistent when the trailer has more or fewer than 4 wheels.
+
+### How to use with extract_binary_mask.py
+
+| Task | Mode | Colors to extract |
+|------|------|-------------------|
+| `outline` | `all_except_background` | Everything except black (body + mirrors + antenna + wheels) |
+| `holes` | `by_color_ids` | `(0, 0, 255)` — blue see-through only |
+| `mirror` | `by_color_ids` | `(0, 255, 0)` — green mirrors only |
+| `trailer` | `all_except_background` | Everything except black |
+| `antenna` | `by_color_ids` | `(255, 255, 255)` — white antenna only |
+
+```bash
+# outline / trailer — extract all foreground
+python carcutter/data_preparation/extract_binary_mask.py \
+  --input-dir <masks> --output-dir <binary_masks> \
+  --mode all_except_background
+
+# holes — extract only blue see-through regions
+python carcutter/data_preparation/extract_binary_mask.py \
+  --input-dir <masks> --output-dir <binary_masks> \
+  --mode by_color_ids --background-color 255,0,0
+  # Note: by_color_ids keeps white (255,255,255) by default;
+  # to target blue, patch category_ids in the script or use check_mask_colors.py first
+```
+
+Use `check_mask_colors.py` to verify which colors are actually present in a batch:
+```bash
+python carcutter/data_preparation/check_mask_colors.py --folder <masks_dir>
+```
+
+---
+
 ## Script: extract_binary_mask.py
 
 Location: `carcutter/data_preparation/`
