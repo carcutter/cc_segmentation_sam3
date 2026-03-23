@@ -76,6 +76,15 @@ train = [
     "fairscale",
     "scikit-image",
     "scikit-learn",
+    "einops",
+    "decord",
+    "psutil",
+    "open_clip_torch",
+    "opencv-python",
+    "pycocotools",
+    "numba",
+    "python-rapidjson",
+    "tqdm",
 ]
 
 [project.urls]

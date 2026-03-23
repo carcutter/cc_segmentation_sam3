@@ -10,6 +10,29 @@ metadata:
 
 # SAM3 Segmentation Retraining
 
+## Environment Setup (first time only)
+
+Run from the repo root — creates the `cc_sam3` conda environment with all dependencies:
+
+```bash
+bash setup.sh
+```
+
+After setup, run all Python commands using the environment's Python directly:
+
+```bash
+# Find the Python path:
+which python  # after: conda activate cc_sam3
+# Or use full path:
+~/miniconda3/envs/cc_sam3/bin/python <script>
+```
+
+> **WARNING:** Do NOT use `conda run -n cc_sam3 python ...` if a `.venv` exists in the
+> working directory — it will pick up the wrong Python. Always use the full path or
+> `conda activate cc_sam3` first.
+
+---
+
 ## CRITICAL: Ask first
 
 Before taking any action, confirm:
@@ -22,11 +45,13 @@ Before taking any action, confirm:
 
 ## Phase 1: Data Preparation
 
-Only needed when raw data has changed. All scripts run with `conda run -n sam3`. See `references/data-pipeline.md` for full details.
+Only needed when raw data has changed. See `references/data-pipeline.md` for full details.
+
+> Use `~/miniconda3/envs/cc_sam3/bin/python` or activate the env first.
 
 ### Step 0 — Extract binary masks (skip if masks are already binary)
 ```bash
-conda run -n sam3 python carcutter/data_preparation/extract_binary_mask.py \
+python carcutter/data_preparation/extract_binary_mask.py \
   --input-dir data/car_segmentation/<batch>/masks \
   --output-dir data/car_segmentation/<batch>/binary_masks \
   --mode all_except_background
@@ -34,7 +59,7 @@ conda run -n sam3 python carcutter/data_preparation/extract_binary_mask.py \
 
 ### Step 1 — Foreground crop (skip if not cropping to object bbox)
 ```bash
-conda run -n sam3 python carcutter/data_preparation/crop_to_outline_bbox.py \
+python carcutter/data_preparation/crop_to_outline_bbox.py \
   --raw-dir data/car_segmentation/<batch>/raw_images \
   --mask-dir data/car_segmentation/<batch>/binary_masks \
   --output-dir data/car_segmentation/<batch>
@@ -43,7 +68,7 @@ Output: `raw_foreground_crop/` and `masks_foreground_crop/` in the batch folder.
 
 ### Step 2 — Train/val split
 ```bash
-conda run -n sam3 python carcutter/data_preparation/prepare_splits/create_train_val_split_general.py \
+python carcutter/data_preparation/prepare_splits/create_train_val_split_general.py \
   --raw-dir data/car_segmentation/<batch>/raw_foreground_crop \
   --mask-dir data/car_segmentation/<batch>/masks_foreground_crop \
   --output-dir data/training/<task>/<task>_<date> \
@@ -53,7 +78,7 @@ Output: `data/training/{task}/{task}_{date}/train/` and `val/` with `images/` + 
 
 ### Step 3 — Convert to COCO/RLE format
 ```bash
-conda run -n sam3 python carcutter/data_preparation/prepare_sam3_format/prepare_sam3_dataset.py \
+python carcutter/data_preparation/prepare_sam3_format/prepare_sam3_dataset.py \
   --data-root data/training/<task>/<task>_<date> \
   --task-name <task> --category-names <task> --min-area 100 --min-hole-area 50
 ```
@@ -61,9 +86,9 @@ Output: `data/training/{task}/{task}_{date}/sam3_format/annotations/instances_{t
 
 ### Step 4 — Verify (recommended)
 ```bash
-conda run -n sam3 python carcutter/data_preparation/prepare_sam3_format/verify_annotations.py \
+python carcutter/data_preparation/prepare_sam3_format/verify_annotations.py \
   --ann-file data/training/<task>/<task>_<date>/sam3_format/annotations/instances_train.json
-conda run -n sam3 python carcutter/data_preparation/prepare_sam3_format/visualize_coco_annotations.py \
+python carcutter/data_preparation/prepare_sam3_format/visualize_coco_annotations.py \
   --ann-file data/training/<task>/<task>_<date>/sam3_format/annotations/instances_train.json \
   --img-dir data/training/<task>/<task>_<date>/train/images
 ```
@@ -99,15 +124,17 @@ See `references/training-guide.md` for all freeze options and learning rate tuni
 
 ## Phase 3: Launch Training
 
+The config path is relative to `sam3/train/` (Hydra resolves it via the installed package):
+
 ```bash
 # Single GPU
 python sam3/train/train.py \
-  -c sam3/train/configs/{task}/freeze/{task}_finetune_with_freezing.yaml \
+  -c configs/{task}/freeze/{task}_finetune_with_freezing.yaml \
   --use-cluster 0 --num-gpus 1
 
 # Multi-GPU
 python sam3/train/train.py \
-  -c sam3/train/configs/{task}/freeze/{task}_finetune_with_freezing.yaml \
+  -c configs/{task}/freeze/{task}_finetune_with_freezing.yaml \
   --use-cluster 0 --num-gpus 4
 ```
 
@@ -124,6 +151,14 @@ Post-training: open `evaluate_{task}.ipynb` in Jupyter for per-sample analysis.
 ---
 
 ## Common Issues
+
+**`ModuleNotFoundError: No module named 'torch'` when using `conda run`**
+- `conda run -n cc_sam3 python` picks up the wrong Python when a `.venv` is active in the shell
+- Fix: use the full path `~/miniconda3/envs/cc_sam3/bin/python` or run `conda activate cc_sam3` first
+
+**Config not found by Hydra (`Cannot find primary config`)**
+- Pass config path relative to `sam3/train/` (e.g., `configs/trailer/freeze/trailer_finetune_with_freezing.yaml`)
+- Config YAML must start with `# @package _global_` — without it, Hydra nests the content under the path
 
 **OOM during training**
 - Reduce `data.train.batch_size` in the config
