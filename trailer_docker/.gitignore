@@ -1,0 +1,7 @@
+*.tar
+*.tar.gz
+weights/
+test_input/
+test_output/
+__pycache__/
+*.pyc

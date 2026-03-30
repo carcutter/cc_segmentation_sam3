@@ -1,0 +1,18 @@
+# Reference/dev files — not needed inside the image
+eval/
+combiner/
+configs/
+inference/run_inference.py
+inference/run_multi_prompt_inference.py
+
+# Test folders — mounted at runtime, not baked in
+test_input/
+test_output/
+
+# Dev tooling
+download_weights.py
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.git/

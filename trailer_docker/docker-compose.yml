@@ -1,0 +1,15 @@
+services:
+  trailer-seg:
+    image: trailer-seg:latest
+    build: .
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./test_input:/input
+      - ./test_output:/output
+    restart: unless-stopped

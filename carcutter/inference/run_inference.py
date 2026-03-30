@@ -91,7 +91,7 @@ def create_datapoint(pil_image: Image.Image, text_prompt: str, query_id: int) ->
                 coco_image_id=query_id,
                 original_image_id=query_id,
                 original_category_id=1,
-                original_size=[w, h],
+                original_size=[h, w],
                 object_id=0,
                 frame_index=0,
             ),
@@ -104,8 +104,11 @@ def flatten_masks(masks_tensor: torch.Tensor) -> np.ndarray | None:
     """OR all predicted instance masks into one binary mask. Returns H×W uint8 array (0/255)."""
     if masks_tensor is None or len(masks_tensor) == 0:
         return None
+    # PostProcessImage may return [N, 1, H, W] or [N, H, W]
+    if masks_tensor.dim() == 4:
+        masks_tensor = masks_tensor.squeeze(1)  # [N, 1, H, W] → [N, H, W]
     flat = masks_tensor.any(dim=0)  # [N, H, W] → [H, W]
-    return (flat.cpu().numpy().astype(np.uint8)) * 255
+    return flat.cpu().numpy().astype(np.uint8) * 255
 
 
 def run_inference(
@@ -133,12 +136,18 @@ def run_inference(
     print(f"Output      : {output_dir}")
 
     print("\nLoading model...")
-    model = build_sam3_image_model(
-        device=device,
-        eval_mode=True,
-        checkpoint_path=checkpoint,
-        load_from_HF=(checkpoint is None),
-    )
+    # Load base model from HF, then overlay fine-tuned checkpoint if provided.
+    # (Fine-tuned checkpoints only update the decoder; the backbone must come
+    # from the HF base. Pattern mirrors evaluate_holes.ipynb.)
+    model = build_sam3_image_model(device=device, eval_mode=True, load_from_HF=True)
+    if checkpoint is not None:
+        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        state = ckpt["model"] if "model" in ckpt else ckpt
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing:
+            print(f"  checkpoint missing keys: {len(missing)}")
+        if unexpected:
+            print(f"  checkpoint unexpected keys: {len(unexpected)}")
 
     transform = build_transform()
     postprocessor = PostProcessImage(
@@ -156,6 +165,11 @@ def run_inference(
     autocast_device = "cuda" if device.startswith("cuda") else "cpu"
     with torch.inference_mode(), torch.autocast(autocast_device, dtype=torch.bfloat16):
         for query_id, img_path in enumerate(tqdm(image_files, desc="Inferring"), start=1):
+            output_path = os.path.join(output_dir, img_path.stem + ".png")
+            if os.path.exists(output_path):
+                stats["total"] += 1
+                stats["with_masks"] += 1  # approximate
+                continue
             pil_image = Image.open(img_path).convert("RGB")
             h, w = pil_image.size[1], pil_image.size[0]
             stats["total"] += 1
@@ -170,7 +184,6 @@ def run_inference(
             processed = postprocessor.process_results(output, batch.find_metadatas)
 
             result = processed.get(query_id)
-            output_path = os.path.join(output_dir, img_path.stem + ".png")
 
             has_masks = (
                 result is not None
