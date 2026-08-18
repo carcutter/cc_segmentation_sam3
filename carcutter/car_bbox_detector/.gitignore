@@ -1,0 +1,20 @@
+# Research working dirs: datasets, caches and checkpoints. ~90 GB, none of it belongs in git.
+# Deployable weights are versioned with DVC in carcutter/model-registry; see
+# carcutter/exterior_segmentation/ARCHITECTURE.md for the manifest.
+__pycache__/
+data/
+experiments/
+birefnet/
+antenna_clf_data/
+antenna_hard_negs/
+antenna_seg_data/
+coarse_masks/
+coarse_masks_holes/
+hole_seg_crops/
+holes_seg_data/
+holeseg_detframed/
+seg_data/
+smallhole_data/
+union_masks_flat/
+window_seg_crops/
+windowseg_detframed/
